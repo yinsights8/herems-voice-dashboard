@@ -157,13 +157,19 @@ let speakDone = Promise.resolve(), activeController = null;
 async function transmit(message, options = {}){
   if (!message.trim()) return;
   if (running){
-    // don't silently swallow it — say so, so it never looks like nothing happened
+    // A task is running. Plain words go into it as guidance (Hermes /steer);
+    // if that can't happen they're sent the moment the task ends. Never dropped.
+    if (!message.trim().startsWith('/')) return steerRun(message.trim());
     log('note','BUSY',`still working — "${message.slice(0,40)}" not sent. Wait, or press Esc to cancel.`);
     return;
   }
   running = true; answer = ''; firstDelta = false; speakThisRun = options.speak !== false;
   const turn = curTurn = options.turn || newTurn('text');
   mark(turn, 'sent');
+
+  // a few seconds into a voice-led task, open the mic again so you can steer or stop it
+  clearTimeout(listenTimer);
+  listenTimer = setTimeout(() => { if (running && convo && micStream && phase === 'busy') listenDuringRun(); }, 3000);
 
   const fresh = /^\/new\b/.test(message.trim());
   const id = rid();
@@ -215,9 +221,43 @@ async function transmit(message, options = {}){
   activeController = null;
   running = false;
   clearInterval(tick);
+  clearTimeout(listenTimer);
   clearPermission();                 // a finished or cancelled run has nothing left to approve
   await speakDone;                 // don't return until Jarvis has finished (or been interrupted)
   reportTurn(turn);
+  if (nextUp){                     // something said mid-task that couldn't be steered in
+    const m = nextUp; nextUp = null;
+    log('send','SEND',`sending what you said during the task: ${m.slice(0, 80)}`);
+    setTimeout(() => transmit(m), 0);
+  }
+}
+
+// ── talking to a task while it runs ──
+let nextUp = null, listenTimer = null;
+async function steerRun(text){
+  try {
+    const r = await fetch('/api/steer', {method:'POST', headers:apiHeaders({'content-type':'application/json'}),
+                                         body: JSON.stringify({text})});
+    if (r.ok){
+      log('send','STEER',`passed to the running task: "${text.slice(0, 90)}"`);
+      return;
+    }
+  } catch(_){}
+  nextUp = nextUp ? nextUp + ' ' + text : text;
+  log('note','QUEUED',`will send when the current task finishes: "${text.slice(0, 60)}"`);
+}
+function cancelRun(){
+  if (!(running && activeController)) return false;
+  fetch('/api/cancel', {method:'POST', headers:apiHeaders({'content-type':'application/json'}), body:'{}'}).catch(()=>{});
+  activeController.abort();
+  nextUp = null;
+  return true;
+}
+// Keep the microphone open while a task runs, without changing the "working" display.
+function listenDuringRun(){
+  if (!convo || !micStream || phase === 'speaking') return;
+  phase = 'listening'; inSpeech = false; onsetMs = 0; voicedMs = 0; turnBuf = [];
+  setState('running', 'RUNNING', 'working · speak to steer, say "stop" to cancel');
 }
 
 function handle(ev){
@@ -571,7 +611,10 @@ function startListening(){
 // Return to listening after a turn — but never cut across Jarvis speaking
 // or a turn that barge-in has already started.
 function resumeListening(){
-  if (convo && micStream && phase !== 'listening' && phase !== 'speaking') startListening();
+  if (!convo || !micStream || phase === 'speaking') return;
+  if (running) return listenDuringRun();         // a task is still going: keep listening, keep showing it
+  if (phase !== 'listening') startListening();
+  else if (!inSpeech) setState('listening','LISTENING','listening…');
 }
 
 function encodeWav(chunks){
@@ -676,6 +719,11 @@ async function finishTurn(reason){
       }
       log('voice','VOICE','approval pending — say "yes" or "no"');
       return startListening();
+    } else if (running && /^(stop|cancel|abort|never ?mind|stop (it|that))[.!]?$/i.test(text.trim())){
+      emptyStreak = 0;
+      log('voice','VOICE',`heard "${text}" — stopping the task`);
+      turn.note = 'stop command'; reportTurn(turn);
+      cancelRun();
     } else {
       emptyStreak = 0;
       unflagSelect('#voiceSel');
@@ -959,11 +1007,7 @@ document.querySelectorAll('[data-quick]').forEach(b => b.onclick = () =>
   transmit(b.dataset.quick, {speak:false}));
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
-  if (running && activeController){
-    fetch('/api/cancel', {method:'POST', headers:apiHeaders({'content-type':'application/json'}), body:'{}'}).catch(()=>{});
-    activeController.abort();
-    return;
-  }
+  if (cancelRun()) return;
   if (convo) stopConvo();
 });
 $('#voiceSel') && ($('#voiceSel').onchange = e => {

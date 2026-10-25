@@ -172,6 +172,13 @@ def session_usable(sid):
     return valid_session(sid)
 
 
+def steer(text):
+    """Guidance for the running task. Only the persistent ACP runtime can take it."""
+    if not acp_runtime.turn_active():
+        return False, "no task is running in hermes-acp"
+    return acp_runtime.steer(text)
+
+
 def answer_permission(perm_id, option_id):
     return acp_runtime.answer_permission(perm_id, option_id)
 

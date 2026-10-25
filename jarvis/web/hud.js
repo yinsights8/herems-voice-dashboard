@@ -160,10 +160,11 @@ new MutationObserver(muts => {
     else if (kind === 'COMPLETE' || kind === 'ERROR' || kind === 'CANCEL'){ toolName = null; doing.textContent = kind === 'COMPLETE' ? 'answer ready' : msg.slice(0, 90); }
     else if (kind === 'NOTE' && msg.startsWith('still working')) doing.textContent = msg;
     else if (kind === 'APPROVAL') doing.textContent = msg;
+    else if (kind === 'STEER') doing.textContent = '↪ ' + msg.replace(/^passed to the running task: /, '');
   }
 }).observe(q('#log'), {childList: true});
 
-const HINTS = {listening: 'Listening — speak now', running: 'Working — Esc to stop', speaking: 'Speaking — talk over to interrupt',
+const HINTS = {listening: 'Listening — speak now', running: 'Working — speak to steer, say “stop” or press Esc to cancel', speaking: 'Speaking — talk over to interrupt',
                error: 'Something failed — see neural activity', idle: 'standby — Ctrl+Space to talk'};
 function stateNow(){
   const c = document.body.classList;

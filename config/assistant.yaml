@@ -47,6 +47,10 @@ voice:
     voice_id: JBFqnCBsd6RMkjVDRZzb
     model: eleven_turbo_v2_5
     language: en              # speech-to-text language; blank = guess per clip (unreliable on noise)
+    # Names the speech-to-text should expect. Uses Scribe v2, which costs a little more
+    # per minute than v1; empty list [] = v1 without keyterms.
+    keyterms: [Hermes, Robin, Kokoro, ElevenLabs, Yash, Glasgow]
+    stt_model:                # blank = scribe_v2 with keyterms, scribe_v1 without
   kokoro:                     # free, local text-to-speech
     # http = the Kokoro-FastAPI server (Docker):
     #          docker run -d --name kokoro -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest

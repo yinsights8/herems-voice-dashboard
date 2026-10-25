@@ -49,6 +49,8 @@ ENV_MAP = {
     "voice.elevenlabs.voice_id": "ELEVENLABS_VOICE_ID",
     "voice.elevenlabs.model": "ELEVENLABS_MODEL",
     "voice.elevenlabs.language": "ELEVENLABS_STT_LANGUAGE",
+    "voice.elevenlabs.keyterms": "ELEVENLABS_STT_KEYTERMS",
+    "voice.elevenlabs.stt_model": "ELEVENLABS_STT_MODEL",
     "logging.timings": "JARVIS_TIMING_LOG",
     "logging.log_dir": "JARVIS_LOG_DIR",
     "logging.raw_log": "JARVIS_RAW_LOG",

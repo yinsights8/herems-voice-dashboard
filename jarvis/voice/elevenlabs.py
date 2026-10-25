@@ -18,6 +18,11 @@ MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
 # Speech-to-text language (ISO code, e.g. "en"). Blank = Scribe guesses per clip,
 # which goes wrong on short or noisy clips.
 STT_LANGUAGE = os.environ.get("ELEVENLABS_STT_LANGUAGE", "").strip()
+# Names Scribe should expect ("Hermes" otherwise comes out as "Hubways").
+# Keyterms need Scribe v2 and cost extra, so setting them switches to v2.
+STT_KEYTERMS = [k.strip() for k in os.environ.get("ELEVENLABS_STT_KEYTERMS", "").split(",") if k.strip()][:100]
+STT_MODEL = os.environ.get("ELEVENLABS_STT_MODEL", "").strip() or ("scribe_v2" if STT_KEYTERMS else "scribe_v1")
+_KEYTERMS_OK = [True]                   # cleared if ElevenLabs rejects them, so speech keeps working
 
 
 def available():
@@ -70,7 +75,20 @@ def transcribe(audio, mime="audio/webm"):
         raise RuntimeError("no ELEVENLABS_API_KEY")
     if not audio:
         raise ValueError("empty audio")
+    if STT_KEYTERMS and _KEYTERMS_OK[0]:
+        try:
+            return _scribe(audio, mime, STT_MODEL, STT_KEYTERMS)
+        except urllib.error.HTTPError as e:
+            if e.code not in (400, 422):
+                raise
+            # the request format or the plan doesn't accept keyterms: carry on without them
+            _KEYTERMS_OK[0] = False
+            import sys
+            sys.stderr.write(f"  [stt] ElevenLabs rejected keyterms (HTTP {e.code}); continuing without them\n")
+    return _scribe(audio, mime, STT_MODEL if _KEYTERMS_OK[0] or not STT_KEYTERMS else "scribe_v1", [])
 
+
+def _scribe(audio, mime, model, keyterms):
     ext = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "mp4",
            "audio/mpeg": "mp3", "audio/wav": "wav"}.get(mime.split(";")[0], "webm")
     boundary = "----jarvis" + os.urandom(8).hex()
@@ -78,7 +96,10 @@ def transcribe(audio, mime="audio/webm"):
 
     body = b"".join([
         b"--", b, b"\r\n",
-        b'Content-Disposition: form-data; name="model_id"\r\n\r\nscribe_v1\r\n',
+        b'Content-Disposition: form-data; name="model_id"\r\n\r\n', model.encode(), b"\r\n",
+        *[part for term in keyterms for part in (
+            b"--", b, b"\r\n", b'Content-Disposition: form-data; name="keyterms"\r\n\r\n',
+            term.encode("utf-8"), b"\r\n")],
         *([b"--", b, b"\r\n",
            b'Content-Disposition: form-data; name="language_code"\r\n\r\n',
            STT_LANGUAGE.encode(), b"\r\n"] if STT_LANGUAGE else []),

@@ -301,7 +301,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._token_ok():
             return self._json({"error": "unauthorized"}, 401)
         ctype = self.headers.get("Content-Type", "").split(";", 1)[0].lower()
-        if p in {"/api/run", "/api/speak", "/api/new", "/api/cancel", "/api/timing", "/api/permission", "/api/task"} and ctype != "application/json":
+        if p in {"/api/run", "/api/speak", "/api/new", "/api/cancel", "/api/timing", "/api/permission", "/api/task", "/api/steer"} and ctype != "application/json":
             return self._json({"error": "application/json required"}, 415)
         if p == "/api/listen" and not ctype.startswith("audio/"):
             return self._json({"error": "audio content type required"}, 415)
@@ -366,6 +366,17 @@ class Handler(BaseHTTPRequestHandler):
             ok = runtime.answer_permission(str(body.get("id") or ""),
                                            str(option) if option else None)
             return self._json({"ok": ok}, 200 if ok else 409)
+
+        if p == "/api/steer":
+            # words spoken or typed while a task runs: passed into it, not queued
+            try:
+                text = str(json.loads(raw or b"{}").get("text") or "").strip()[:2000]
+            except json.JSONDecodeError:
+                return self._json({"error": "bad json"}, 400)
+            if not text:
+                return self._json({"error": "empty text"}, 400)
+            ok, reason = runtime.steer(text)
+            return self._json({"ok": ok, "error": reason}, 200 if ok else 409)
 
         if p == "/api/task":
             # mission queue edits from the HUD: add, toggle done, remove, clear done

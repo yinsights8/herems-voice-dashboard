@@ -42,6 +42,8 @@ RETRY_AFTER_FAILURE_S = 120
 # Hermes answers a prompt sent to a session that is still mid-turn with this
 # instead of a reply, and runs it later where nobody is listening.
 _QUEUED = re.compile(r"^Queued for the next turn\. \(\d+ queued\)")
+# Hermes acknowledges a /steer with a chat message; it is not part of the answer.
+_STEER_REPLY = re.compile(r"^\W*(Steer queued for the active turn|Steer failed|No active turn\W+queued for the next turn)")
 _MODEL = re.compile(r"\bmodel=(\S+)(?:\s+provider=(\S+))?")
 _API_CALL = re.compile(r"API call #(\d+):.*?\bin=(\d+)\b.*?\bout=(\d+)\b.*?\blatency=([\d.]+)s")
 
@@ -312,6 +314,30 @@ class AcpClient:
             time.sleep(0.25)
         return False
 
+    def steer(self, text, timeout=10):
+        """Pass guidance into the running turn with Hermes's /steer command.
+        Hermes handles slash commands before its busy check, so this reaches the
+        active turn instead of being queued. Returns (ok, reason)."""
+        turn = self.turn
+        if not turn:
+            return False, "no task running"
+        rid = next(self._ids)
+        box = queue.Queue()
+        with self._plock:
+            self._pending[rid] = box.put
+        try:
+            self._send({"jsonrpc": "2.0", "id": rid, "method": "session/prompt",
+                        "params": {"sessionId": turn["session"],
+                                   "prompt": [{"type": "text", "text": "/steer " + text}]}})
+            msg = box.get(timeout=timeout)
+        except (AcpUnavailable, queue.Empty) as e:
+            with self._plock:
+                self._pending.pop(rid, None)
+            return False, f"steer failed: {e}" if str(e) else "no reply from Hermes"
+        if msg.get("_eof") or "error" in msg:
+            return False, "Hermes rejected the steer"
+        return True, None
+
     # ── permissions & cancel ─────────────────────────────────
     def answer_permission(self, perm_id, option_id):
         turn = self.turn
@@ -416,6 +442,9 @@ class AcpClient:
                     if k == "agent_message_chunk":
                         c = payload.get("content") or {}
                         txt = c.get("text") if c.get("type", "text") == "text" else ""
+                        if txt and _STEER_REPLY.match(txt.strip()):
+                            yield dict(t="note", message="steer: " + txt.strip().lstrip("⏩ ")[:160])
+                            continue
                         if txt and first and _QUEUED.match(txt.strip()):
                             queued = True              # not an answer: keep it out of the reply
                             continue
@@ -525,6 +554,10 @@ def get_client(cmd, cwd, env, raw_log=None):
 
 def has_session(sid):
     return bool(_CLIENT and _CLIENT.alive() and sid in _CLIENT.sessions)
+
+
+def steer(text):
+    return _CLIENT.steer(text) if (_CLIENT and _CLIENT.turn) else (False, "no task running")
 
 
 def model_info():
