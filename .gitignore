@@ -3,3 +3,11 @@ state.json
 .no-mcp.json
 __pycache__/
 *.pyc
+_backup_before_package.zip
+*.egg-info/
+
+# downloaded voice models (see SETUP.md) and local tool settings
+models/*.onnx
+models/*.bin
+.claude/
+robin-hud.zip

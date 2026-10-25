@@ -19,6 +19,7 @@ import collections
 import itertools
 import json
 import os
+import re
 import queue
 import shlex
 import shutil
@@ -29,7 +30,16 @@ import uuid
 
 PERM_TIMEOUT = int(os.environ.get("JARVIS_PERMISSION_TIMEOUT", "90"))
 IDLE_TIMEOUT = int(os.environ.get("JARVIS_TIMEOUT", "120"))
+# A running tool (terminal command, browser task, scrape) sends nothing until it
+# finishes, so silence while a tool runs is normal: allow much longer.
+TOOL_TIMEOUT = int(os.environ.get("JARVIS_TOOL_TIMEOUT", "900"))
+PROGRESS_EVERY_S = 30                 # "still working" note on the HUD during long silences
 RETRY_AFTER_FAILURE_S = 120
+
+# Hermes logs every model call on stderr, e.g.
+#   agent.conversation_loop: API call #1: model=gpt-6-luna provider=opencode-zen in=13378 out=5 total=13383 latency=2.3s
+# Those lines tell us how much of a turn was the model itself, and how many calls it made.
+_API_CALL = re.compile(r"API call #(\d+):.*?\bin=(\d+)\b.*?\bout=(\d+)\b.*?\blatency=([\d.]+)s")
 
 
 class AcpUnavailable(RuntimeError):
@@ -161,6 +171,13 @@ class AcpClient:
     def _read_stderr(self, proc):
         for line in proc.stderr:
             line = line.rstrip()
+            turn = self.turn
+            if turn is not None:
+                turn["seen"] = time.monotonic()      # Hermes logging = Hermes alive
+                m = _API_CALL.search(line)
+                if m:
+                    turn["api"].append({"at": time.monotonic(), "in": int(m.group(2)),
+                                        "out": int(m.group(3)), "ms": int(float(m.group(4)) * 1000)})
             if line:
                 self.stderr.append(line)
                 if self.raw_log:
@@ -297,16 +314,33 @@ class AcpClient:
             pass
         return True
 
+    def _turn_breakdown(self, timing, tools, t0):
+        """Where a turn's time went, from Hermes's own log: model calls vs the rest."""
+        time.sleep(0.05)                          # let the last stderr line arrive
+        api = list((self.turn or {}).get("api") or [])
+        timing["tool_calls"] = len(tools)
+        timing["api_calls"] = len(api)
+        if api:
+            model_ms = sum(c["ms"] for c in api)
+            timing["model_ms"] = model_ms
+            timing["model_calls_ms"] = "+".join(str(c["ms"]) for c in api)
+            timing["tokens_in"] = api[-1]["in"]
+            timing["tokens_out"] = sum(c["out"] for c in api)
+            # everything Hermes did around the model calls: tools, memory, its own bookkeeping
+            timing["hermes_overhead_ms"] = max(0, timing.get("hermes_total_ms", _ms(t0)) - model_ms)
+
     # ── one turn ─────────────────────────────────────────────
     def prompt(self, session_id, text, timing):
         """Send one prompt; yield dashboard events until Hermes finishes."""
         q = queue.Queue()
-        self.turn = {"session": session_id, "q": q, "perms": {}}
+        self.turn = {"session": session_id, "q": q, "perms": {}, "api": [], "seen": time.monotonic()}
         rid = next(self._ids)
         with self._plock:
             self._pending[rid] = lambda m: q.put(("response", m))
         t0 = last = last_ping = time.monotonic()
         first, done, tools = True, False, {}
+        tool_names, last_note = {}, 0.0
+        first_thought = None
         try:
             self._send({"jsonrpc": "2.0", "id": rid, "method": "session/prompt",
                         "params": {"sessionId": session_id,
@@ -325,11 +359,20 @@ class AcpClient:
                         if now - p["at"] > PERM_TIMEOUT:
                             self._refuse(pid)
                             yield dict(t="note", message=f"approval not given within {PERM_TIMEOUT}s; refused")
-                    if not self.turn["perms"] and now - last > IDLE_TIMEOUT:
+                    running = [tool_names.get(t, "a tool") for t, st in tools.items() if st == "use"]
+                    limit = TOOL_TIMEOUT if running else IDLE_TIMEOUT
+                    quiet = now - max(last, self.turn.get("seen", last))
+                    if quiet >= PROGRESS_EVERY_S and now - last_note >= PROGRESS_EVERY_S:
+                        last_note = now
+                        doing = f"running {running[-1]}" if running else "thinking"
+                        yield dict(t="note", message=f"still working ({doing}) · {int(now - t0)}s so far")
+                    if not self.turn["perms"] and quiet > limit:
                         self.cancel()
                         timing["hermes_total_ms"] = _ms(t0)
+                        what = (f" while running {running[-1]}. Raise hermes.tool_timeout_s"
+                                if running else ". Raise hermes.idle_timeout_s")
                         yield dict(t="error", timing=timing,
-                                   message=f"Hermes went quiet for {IDLE_TIMEOUT}s; turn cancelled.")
+                                   message=f"Hermes went quiet for {limit}s{what} if this task needs longer; turn cancelled.")
                         return
                     continue
                 last = time.monotonic()
@@ -345,13 +388,16 @@ class AcpClient:
                                 timing["hermes_first_text_ms"] = _ms(t0)
                                 yield dict(t="latency", ms=_ms(t0))
                             yield dict(t="delta", text=txt)
+                    elif k == "agent_thought_chunk":
+                        if first_thought is None:
+                            first_thought = time.monotonic()
+                            timing["hermes_first_thought_ms"] = _ms(t0)
                     elif k in ("tool_call", "tool_call_update"):
                         tid = payload.get("toolCallId") or uuid.uuid4().hex
                         if tid not in tools:
                             tools[tid] = "use"
-                            yield dict(t="tool", phase="use",
-                                       name=str(payload.get("title") or payload.get("kind") or "tool")[:120],
-                                       input="")
+                            tool_names[tid] = str(payload.get("title") or payload.get("kind") or "tool")[:120]
+                            yield dict(t="tool", phase="use", name=tool_names[tid], input="")
                         status = payload.get("status")
                         if status in ("completed", "failed") and tools[tid] != "done":
                             tools[tid] = "done"
@@ -372,6 +418,7 @@ class AcpClient:
                         return
                     stop = (payload.get("result") or {}).get("stopReason")
                     timing["stop_reason"] = stop
+                    self._turn_breakdown(timing, tools, t0)
                     if first and stop != "cancelled":
                         yield dict(t="delta", text="Hermes completed without textual output.")
                     yield dict(t="complete", session_id=session_id, ms=_ms(t0), timing=timing)

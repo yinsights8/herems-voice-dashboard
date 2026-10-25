@@ -38,4 +38,4 @@ In order of payoff:
 - [ ] **Streaming speech-to-text** (saves \~0.7–1.5 s, more for long requests). Switch ElevenLabs to its realtime transcription.
 - [ ] **Shorter silence wait** (saves \~0.2 s). A one-line change to `SILENCE_MS`; try it after a few days of normal use.
 
-Run `python3 timings_report.py --last 10` to see the full "you stopped → Jarvis speaks" number from the browser's `TIMING` waterfall.
+Run `python3 scripts/timings_report.py --last 10` to see the full "you stopped → Jarvis speaks" number from the browser's `TIMING` waterfall.

@@ -1,7 +1,7 @@
 """
 JARVIS Live — a HUD that drives Hermes Agent.
 
-    python3 server.py
+    python3 -m jarvis
 
 The brain is your own Hermes Agent CLI/profile. Hermes keeps access to the same
 configured tools, browser/Chrome automation, MCP servers, skills, memory, and
@@ -29,8 +29,9 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-ROOT = pathlib.Path(__file__).resolve().parent
-UI = ROOT / "ui"
+from jarvis import PACKAGE_DIR, ROOT  # noqa: E402
+
+UI = PACKAGE_DIR / "web"
 
 # load .env before importing anything that reads os.environ
 _env = ROOT / ".env"
@@ -41,9 +42,13 @@ if _env.exists():
             k, _, v = line.partition("=")
             os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
-import commands         # noqa: E402
-import runtime          # noqa: E402
-import voice            # noqa: E402
+from jarvis import settings  # noqa: E402  — assistant.yaml fills in what .env didn't set
+settings.load()
+
+from jarvis import commands                     # noqa: E402
+from jarvis.hermes import runtime               # noqa: E402
+from jarvis.voice import stt, tts                # noqa: E402
+from jarvis.voice import elevenlabs as voice     # noqa: E402
 
 PORT = int(os.environ.get("JARVIS_PORT", "8730"))
 API_TOKEN = secrets.token_urlsafe(32)
@@ -55,7 +60,9 @@ MAX_AUDIO_BODY = 12 * 1024 * 1024
 # are appended to logs/timings.jsonl and summarised on this terminal.
 # JARVIS_TIMING_LOG=0 turns both off.
 TIMING_ON = os.environ.get("JARVIS_TIMING_LOG", "1") != "0"
-LOG_DIR = pathlib.Path(os.path.expanduser(os.environ.get("JARVIS_LOG_DIR", str(ROOT / "logs"))))
+LOG_DIR = pathlib.Path(os.path.expanduser(os.environ.get("JARVIS_LOG_DIR", "logs")))
+if not LOG_DIR.is_absolute():
+    LOG_DIR = ROOT / LOG_DIR
 _TIMING_LOCK = threading.Lock()
 
 
@@ -107,16 +114,39 @@ def _append_timing(record):
 # The Jarvis persona, appended to every run. Without it, the model answers as a
 # coding agent and narrates its own tooling — which is not what you want spoken
 # out loud. Edit persona.md to change how it talks.
-_PERSONA_FILE = ROOT / "persona.md"
+_PERSONA_FILE = pathlib.Path(os.path.expanduser(os.environ.get("ASSISTANT_PERSONA", "config/persona.md")))
+if not _PERSONA_FILE.is_absolute():
+    _PERSONA_FILE = ROOT / _PERSONA_FILE
 
 
 def persona():
     try:
-        base = _PERSONA_FILE.read_text(encoding="utf-8").strip()
+        base = _PERSONA_FILE.read_text(encoding="utf-8").strip().replace("{name}", settings.name())
     except OSError:
         base = ""
     extra = commands.context_block()      # profile / goal / personality / queue
     return "\n\n".join(x for x in (base, extra) if x)
+# Voice choices on the HUD: each sets both directions.
+#   elevenlabs: ElevenLabs Scribe listens, ElevenLabs speaks
+#   kokoro:     faster-whisper listens, Kokoro speaks (both local)
+#   browser:    the browser's own recognition and voice
+PROVIDERS = {"elevenlabs": ("elevenlabs", "elevenlabs"), "kokoro": ("whisper", "kokoro")}
+DEFAULT_PROVIDER = (os.environ.get("ASSISTANT_VOICE") or "elevenlabs").strip().lower()
+if DEFAULT_PROVIDER not in ("elevenlabs", "kokoro", "browser"):
+    DEFAULT_PROVIDER = "elevenlabs"
+
+
+def voice_status():
+    """Per voice choice: can it listen and speak right now, and why not."""
+    s, t = stt.status(), tts.status()
+    out = {}
+    for name, (s_eng, t_eng) in PROVIDERS.items():
+        out[name] = {"ok": s[s_eng]["ok"] and t[t_eng]["ok"],
+                     "listen": {"engine": s_eng, **s[s_eng]},
+                     "speak": {"engine": t_eng, **t[t_eng]}}
+    return out
+
+
 # One continuing Hermes conversation until the user hits /new.
 SESSION = {"id": None, "persona_hash": None}
 
@@ -147,7 +177,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(data)
+        self._write(data)
+
+    def _write(self, data):
+        # The browser may hang up first (page reload, Esc, a fetch it abandoned).
+        # That's normal; don't print a traceback for it.
+        try:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self.close_connection = True
 
     def _bytes(self, data, ctype, code=200, headers=None):
         self.send_response(code)
@@ -157,7 +195,7 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         self.end_headers()
-        self.wfile.write(data)
+        self._write(data)
 
     def _read(self, limit):
         n = int(self.headers.get("Content-Length", 0))
@@ -198,9 +236,15 @@ class Handler(BaseHTTPRequestHandler):
                 voice_mode=os.environ.get("JARVIS_VOICE_MODE", "elevenlabs" if voice.available() else "browser"),
                 voice_id=voice.voice_id() if voice.available() else "browser",
                 stt="elevenlabs" if voice.available() else "browser",
-                tts="elevenlabs" if voice.available() else "browser",
+                tts="server",
+                voice_providers=voice_status(),
+                voice_default=DEFAULT_PROVIDER,
                 hermes_mode=runtime.mode_label() if runtime.runtime_kind() == "hermes" else None,
-                session=SESSION["id"]))
+                session=SESSION["id"],
+                ui=settings.ui_settings(),
+                config=settings.STATUS))
+        if p in ("/api/voice", "/api/tts"):
+            return self._json({"providers": voice_status(), "default": DEFAULT_PROVIDER})
         if p == "/api/timings":
             if not self._token_ok():
                 return self._json({"error": "unauthorized"}, 401)
@@ -228,6 +272,7 @@ class Handler(BaseHTTPRequestHandler):
         data = f.read_bytes()
         if f.suffix == ".html":
             data = data.replace(b"__JARVIS_TOKEN__", API_TOKEN.encode())
+            data = data.replace(b"JARVIS", settings.name().upper().encode("utf-8"))
         return self._bytes(data, ctype)
 
     # ── POST ─────────────────────────────────────────────────
@@ -249,25 +294,36 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == "/api/speak":
             try:
-                text = (json.loads(raw or b"{}").get("text") or "").strip()
-                t = time.monotonic()
-                audio = voice.speak(text)
-                tts_ms = _ms(t)
-                _print_timing("tts", {"elevenlabs_tts_ms": tts_ms, "chars": len(text)})
-                return self._bytes(audio, "audio/mpeg", headers={"X-Jarvis-Tts-Ms": str(tts_ms)})
+                body = json.loads(raw or b"{}")
+                text = (body.get("text") or "").strip()
+                if not text:
+                    return self._json({"error": "empty text"}, 400)
+                engine = (body.get("engine") or tts.DEFAULT_ENGINE).lower()
+                try:
+                    out = tts.synthesize(text, engine)
+                except tts.TTSError as e:
+                    _print_timing("tts", {"engine": engine, "failed": str(e)[:120]})
+                    return self._json({"error": str(e), "engine": engine}, 502)
+                _print_timing("tts", {"engine": out["engine"], "tts_ms": out["ms"], "chars": len(text)})
+                return self._bytes(out["audio"], out["mime"],
+                                   headers={"X-Jarvis-Tts-Ms": str(out["ms"]), "X-Jarvis-Tts-Engine": out["engine"]})
             except Exception as e:                        # noqa: BLE001
                 return self._json({"error": str(e)[:200]}, 503)
 
         if p == "/api/listen":
+            from urllib.parse import parse_qs
+            engine = (parse_qs(urlparse(self.path).query).get("engine") or ["elevenlabs"])[0].lower()
+            mime = self.headers.get("Content-Type", "audio/webm")
             try:
-                mime = self.headers.get("Content-Type", "audio/webm")
-                t = time.monotonic()
-                text = voice.transcribe(raw, mime)
-                stt = {"elevenlabs_stt_ms": _ms(t), "bytes": len(raw)}
-                _print_timing("stt", stt)
-                return self._json({"text": text, "timing": stt})
-            except Exception as e:                        # noqa: BLE001
-                return self._json({"error": str(e)[:300], "text": ""}, 503)
+                text, ms = stt.transcribe(raw, mime, engine)
+            except stt.STTError as e:
+                _print_timing("stt", {"engine": engine, "failed": str(e)[:120]})
+                return self._json({"error": str(e)[:300], "engine": engine, "text": ""}, 502)
+            timing = {"engine": engine, "stt_ms": ms, "bytes": len(raw)}
+            if engine == "elevenlabs":
+                timing["elevenlabs_stt_ms"] = ms        # older log readers use this name
+            _print_timing("stt", timing)
+            return self._json({"text": text, "timing": timing})
 
         if p == "/api/new":
             runtime.cancel_active()
@@ -391,7 +447,7 @@ class Handler(BaseHTTPRequestHandler):
                 if ev.get("t") == "error":
                     SESSION["id"] = None       # drop a bad/stale session so the next run is fresh
                 emit(ev)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass                                          # client navigated away
         except Exception as e:                            # noqa: BLE001
             try:
@@ -404,24 +460,28 @@ def main():
     kind = runtime.runtime_kind()
     brain = ("Hermes Agent (profile tools, skills, memory, MCP, browser integrations live)"
              if kind == "hermes" else "MOCK — Hermes CLI not reachable")
-    vo = (f"ElevenLabs · {voice.voice_id()[:8]}…" if voice.available()
-          else "none (add ELEVENLABS_API_KEY for voice)")
+    vs = voice_status()
+    vo = (f"default {DEFAULT_PROVIDER} · "
+          + " · ".join(f"{k} {'ok' if v['ok'] else 'off'}" for k, v in vs.items()))
     perm = runtime.PERMISSION
     perm_note = ("  can run tools without asking — set JARVIS_PERMISSION=default to require approval"
                  if perm == "bypass" else "")
 
     print(f"""
-  JARVIS · Hermes Live HUD
+  {settings.name().upper()} · Hermes Live HUD
   ──────────────────────────────────────────────
+  settings     {settings.STATUS}
   brain        {brain}
   profile      {runtime.PROFILE}
   workdir      {runtime.WORKDIR}
   hermes       {runtime.mode_label() if kind == "hermes" else "-"}
   permission   {perm}{perm_note}
-  voice        {vo} + browser Web Speech fallback
+  voice        {vo}
   open         http://localhost:{PORT}
 """, flush=True)
 
+    tts.warm()
+    stt.warm()
     if kind == "hermes":
         runtime.warm_caches()            # fill the tool list in the background
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)

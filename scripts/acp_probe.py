@@ -1,8 +1,8 @@
 """
 Probe Hermes's ACP server: is a warm, long-running Hermes fast and streaming?
 
-    python3 acp_probe.py
-    python3 acp_probe.py C:/Users/yashd/AppData/Local/hermes/bin/hermes-acp.exe
+    python3 scripts/acp_probe.py
+    python3 scripts/acp_probe.py C:/Users/yashd/AppData/Local/hermes/bin/hermes-acp.exe
 
 It starts hermes-acp once, opens a session, then sends two short prompts in the
 same process and prints how long each step took. The second prompt shows the

@@ -1,0 +1,89 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Voice assistant settings for the Hermes dashboard
+#
+#  Edit, then restart the server (./start.sh). Leave a value blank to use the
+#  built-in default.
+#
+#  Precedence: real environment variables  >  .env  >  this file  >  defaults.
+#  Keep API keys (ELEVENLABS_API_KEY etc.) in .env, never here.
+#
+#  Hermes's own model, provider, skills and tools are configured in Hermes
+#  itself (`hermes setup`, `hermes tools`). The `hermes:` section below only
+#  passes optional overrides to it.
+# ─────────────────────────────────────────────────────────────────────────────
+
+assistant:
+  name: Robin                 # shown on the HUD and used in the persona
+  persona_file: config/persona.md    # how it speaks; {name} in that file becomes the name above
+
+server:
+  port: 8730
+  open_browser: true          # open the HUD in your browser on start
+
+hermes:
+  # auto = keep one hermes-acp process running (fast) and fall back to
+  #        `hermes chat` per turn if it fails; acp = always ACP; cli = always `hermes chat`
+  mode: auto
+  command: C:/Users/yashd/AppData/Local/hermes/bin/hermes.exe
+  acp_command:                # blank = found next to `command`
+  workdir: C:/Users/yashd     # folder Hermes's file and terminal tools start in
+  # Overrides below force mode cli in auto mode, because hermes-acp can't take them.
+  profile:                    # blank = Hermes default profile
+  model:                      # blank = the model set in Hermes
+  toolsets: []                # e.g. [web, terminal]; empty = all enabled in Hermes
+  idle_timeout_s: 120         # stop a turn when Hermes is silent this long (no tool running)
+  tool_timeout_s: 900         # allow this long while a tool runs (terminal, browser, scraping)
+  permission_timeout_s: 90    # refuse a tool approval nobody answered
+
+voice:
+  # Starting voice. The HUD's Voice menu overrides it (remembered per browser).
+  #   elevenlabs = ElevenLabs Scribe listens, ElevenLabs speaks (cloud, needs the key)
+  #   kokoro     = faster-whisper listens, Kokoro speaks (both local and free)
+  #   browser    = the browser's own recognition and voice
+  # Nothing switches automatically: if the chosen voice fails, the HUD shows why
+  # and you choose another.
+  provider: elevenlabs
+  elevenlabs:                 # used when ELEVENLABS_API_KEY is in .env
+    voice_id: JBFqnCBsd6RMkjVDRZzb
+    model: eleven_turbo_v2_5
+    language: en              # speech-to-text language; blank = guess per clip (unreliable on noise)
+  kokoro:                     # free, local text-to-speech
+    # http = the Kokoro-FastAPI server (Docker):
+    #          docker run -d --name kokoro -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    # onnx = in this process: pip install kokoro-onnx, plus the two model files below
+    mode: http
+    url: http://localhost:8880
+    voice: bm_george          # bm_ = British male, bf_ = British female, am_/af_ = American
+    speed: 1.0
+    lang: en-gb               # onnx mode only
+    model_path: models/kokoro-v1.0.onnx     # onnx mode only
+    voices_path: models/voices-v1.0.bin     # onnx mode only
+  whisper:                    # speech-to-text for the "kokoro" voice (faster-whisper)
+    # http  = an OpenAI-compatible transcription server (Speaches, Docker):
+    #           docker run -d --name speaches --restart unless-stopped -p 8000:8000 ghcr.io/speaches-ai/speaches:latest-cpu
+    #         then download the model once:
+    #           curl -X POST http://localhost:8000/v1/models/Systran/faster-distil-whisper-small.en
+    # local = in this process: pip install faster-whisper (downloads the model on first use)
+    mode: http
+    url: http://localhost:8000
+    model: Systran/faster-distil-whisper-small.en   # English-only, fast on CPU
+    language: en
+    device: cpu               # local mode only (cuda if you have an NVIDIA GPU)
+    compute_type: int8        # local mode only
+    beam_size: 1              # local mode only; 1 = fastest
+  browser_language: en-GB     # browser speech recognition, when ElevenLabs isn't set up
+  max_spoken_chars: 700       # longer answers are shown in full but spoken cut short
+  earcon: true                # short tick when your turn ends
+  barge_in: true              # speak over the assistant to interrupt it
+  listening:                  # milliseconds; tune with the Metrics page
+    silence_ms: 800           # quiet this long ends your turn (lower = faster, may cut you off)
+    onset_ms: 100             # sound must last this long to count as speech
+    min_speech_ms: 250        # shorter turns are ignored as noise
+    max_turn_ms: 20000        # hard cap on one turn
+    preroll_ms: 400           # audio kept from just before you started speaking
+    barge_in_ms: 280          # how long you must speak over it to interrupt
+
+logging:
+  timings: true               # per-turn timings in logs/timings.jsonl (no words stored)
+  log_dir: logs
+  raw_log:                    # a file path here logs raw Hermes I/O for debugging (includes prompts)

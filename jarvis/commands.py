@@ -16,7 +16,8 @@ import threading
 import time
 import uuid
 
-ROOT = pathlib.Path(__file__).resolve().parent
+from jarvis import ROOT
+
 STATE_FILE = pathlib.Path(os.environ.get("JARVIS_STATE", ROOT / "state.json"))
 _LOCK = threading.Lock()
 _DEFAULT = {"profile": [], "goal": "", "personality": "", "tasks": [], "missions": []}

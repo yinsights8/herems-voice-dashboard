@@ -7,6 +7,8 @@ const RT = {tts:false, stt:false, browserStt:false, browserTts:false};
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const speechSynth = window.speechSynthesis;
 const API_TOKEN = document.querySelector('meta[name="jarvis-token"]')?.content || '';
+let NAME = 'Jarvis';                        // replaced by assistant.yaml's name at boot
+let UI = {barge_in: true, earcon: true, max_spoken_chars: 700, browser_language: ''};
 const apiHeaders = extra => ({'x-jarvis-token': API_TOKEN, ...(extra || {})});
 
 // ── reactor ticks ──
@@ -80,10 +82,10 @@ function turnStages(turn){
     ['endpoint wait', d('lastVoice', 'endpoint'), 'silence before the turn closes'],
     ['encode wav',    d('endpoint', 'encoded'), ''],
     ['upload + STT',  d('sttSent', 'sttDone'),
-       st.elevenlabs_stt_ms != null ? `ElevenLabs ${st.elevenlabs_stt_ms} · ${Math.round((st.bytes||0)/1024)}KB` : ''],
+       (st.stt_ms ?? st.elevenlabs_stt_ms) != null ? `${ENGINE_LABELS[st.engine || 'elevenlabs']} ${st.stt_ms ?? st.elevenlabs_stt_ms} · ${Math.round((st.bytes||0)/1024)}KB` : ''],
     ['to Hermes',     d('sent', 'firstText'), hermesInfo],
     ['answer stream', d('firstText', 'complete'), s.hermes_total_ms != null ? `hermes total ${s.hermes_total_ms}` : ''],
-    ['TTS synth',     d('ttsStart', 'ttsReady'), turn.ttsMs != null ? `ElevenLabs ${turn.ttsMs}` : ''],
+    ['TTS synth',     d('ttsStart', 'ttsReady'), turn.ttsMs != null ? `${ENGINE_LABELS[turn.ttsEngine] || 'server'} ${turn.ttsMs}` : ''],
     ['play start',    d('ttsReady', 'playing'), ''],
   ].filter(r => r[1] != null);
 }
@@ -101,7 +103,7 @@ function reportTurn(turn){
     `${label.padEnd(14)}${fmt(ms).padStart(7)}  ${'█'.repeat(Math.max(ms > 0 ? 1 : 0, Math.round(ms / max * 16))).padEnd(16)}  ${info}`);
   if (turn.t.playing != null && turn.t.spoken != null)
     lines.push(`${'spoke for'.padEnd(14)}${fmt(turn.t.spoken - turn.t.playing).padStart(7)}${turn.interrupted ? '  (interrupted)' : ''}`);
-  const who = turn.kind === 'voice' ? 'you stopped → Jarvis speaks' : 'sent → ' + (end === 'playing' ? 'Jarvis speaks' : 'answer done');
+  const who = turn.kind === 'voice' ? `you stopped → ${NAME} speaks` : 'sent → ' + (end === 'playing' ? `${NAME} speaks` : 'answer done');
   const head = headline != null ? `${who}: ${fmt(headline)}` : (turn.note || 'incomplete turn');
   log('latency', 'TIMING', `${turn.kind} ${turn.id} · ${head}`, esc(lines.join('\n')));
   console.table(Object.fromEntries(stages.map(([l, ms, info]) => [l, {ms, info}])));
@@ -117,11 +119,13 @@ function reportTurn(turn){
       noise_floor: turn.noise != null ? +turn.noise.toFixed(5) : null,
       peak_level: turn.peak != null ? +turn.peak.toFixed(5) : null,
       rejected_noises: turn.rejected ?? null,
+      stt_result: turn.sttResult || null,
       words: turn.words ?? null,
       answer_chars: turn.answerChars ?? null,
       tools: turn.tools || 0,
       approvals: turn.approvals || 0,
       mode: (turn.srv || {}).mode || null,
+      tts_engine: turn.ttsEngine || null,
       stop_reason: (turn.srv || {}).stop_reason || null,
     })}).catch(() => {});
   if (turn.kind === 'voice') rejectedNoises = 0;
@@ -383,7 +387,7 @@ let micStream = null, actx = null, analyser = null, tap = null, sink = null, vbu
 let noiseFloor = 0.01, echoFloor = 0.01, warmFrames = 0;
 let inSpeech = false, onsetMs = 0, voicedMs = 0, loudAt = 0, turnStart = 0, bargeMs = 0;
 let preroll = [], prerollLen = 0, turnBuf = [];
-let turnPeak = 0, rejectedNoises = 0;            // for the latency monitor
+let turnPeak = 0, rejectedNoises = 0, emptyStreak = 0;            // for the latency monitor
 let muted = false, player = null, stopSpeech = null;
 
 // AudioWorklet that hands raw mic PCM to the page in ~21 ms blocks.
@@ -452,6 +456,21 @@ function learnFloor(rms){
   noiseFloor = Math.min(0.08, noiseFloor * (1 - a) + rms * a);
 }
 
+/* learnFloor only sees frames quieter than the speech threshold, so on its own
+   the floor can never rise: if the room gets louder (TV, music, a fan), every
+   background frame starts a "turn" and the floor stays stuck at the quiet-room
+   level. roomLevel() fixes that with minimum statistics: the 15th-percentile
+   level of the last ~4 s, whatever the phase. Speech has gaps between words, so
+   this percentile tracks the room, not the speaker; steady background lifts it. */
+const ROOM_FRAMES = 190;                               // ~4 s of ~21 ms frames
+let roomRing = [], roomTick = 0;
+function trackRoom(rms){
+  roomRing.push(rms); if (roomRing.length > ROOM_FRAMES) roomRing.shift();
+  if (++roomTick % 10 || roomRing.length < ROOM_FRAMES / 2) return;
+  const p15 = [...roomRing].sort((a, b) => a - b)[Math.floor(roomRing.length * 0.15)];
+  if (p15 > noiseFloor) noiseFloor = Math.min(0.08, noiseFloor + (p15 - noiseFloor) * 0.35);
+}
+
 function downsample(f32, rate){
   if (rate === OUT_RATE) return f32;
   const ratio = rate / OUT_RATE, n = Math.floor(f32.length / ratio), out = new Float32Array(n);
@@ -484,6 +503,7 @@ function onFrame(raw){
   const pcm = downsample(raw, actx.sampleRate);
   const frameMs = raw.length / actx.sampleRate * 1000;
   const rms = bandRms();
+  if (phase !== 'speaking') trackRoom(rms);              // the assistant's own voice isn't the room
   const {enter, stay} = levels();
   const t = performance.now();
 
@@ -510,7 +530,7 @@ function onFrame(raw){
   }
 
   pushPreroll(pcm);
-  if (phase === 'speaking'){
+  if (phase === 'speaking' && UI.barge_in){
     // Jarvis's own voice leaking back through the speakers raises echoFloor,
     // so only clearly-louder, sustained speech counts as an interruption.
     const barge = Math.max(enter * 1.8, echoFloor * 2.5 + 0.004);
@@ -535,7 +555,7 @@ function startSpeech(t, alreadyMs){
 
 function bargeIn(t){
   bargeMs = 0;
-  log('voice','VOICE','barge-in — Jarvis interrupted');
+  log('voice','VOICE',`barge-in — ${NAME} interrupted`);
   if (stopSpeech) stopSpeech();
   phase = 'listening';
   setState('listening','LISTENING','go ahead…');
@@ -574,14 +594,15 @@ function encodeWav(chunks){
 // Drop audio-event tags like "(background noise)" and filler-only transcripts.
 function cleanTranscript(t){
   const s = String(t || '').replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim();
-  const bare = s.toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  // \p{L}: letters in any script, so a Hindi or other non-Latin transcript isn't discarded
+  const bare = s.toLowerCase().replace(/[^\p{L}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
   if (!bare || /^((uh+|um+|hm+|mm+|ah+|er+|oh)\s?)+$/.test(bare)) return '';
   return s;
 }
 
 // Short rising tick the instant your turn ends — "heard you".
 function earcon(){
-  if (muted || !actx) return;
+  if (muted || !actx || !UI.earcon) return;
   const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
   o.type = 'sine';
   o.frequency.setValueAtTime(880, t); o.frequency.exponentialRampToValueAtTime(1320, t + 0.08);
@@ -598,6 +619,11 @@ async function finishTurn(reason){
   turn.t.speechStart = turnStart; turn.t.lastVoice = loudAt; mark(turn, 'endpoint');
   turn.noise = noiseFloor; turn.peak = turnPeak; turn.rejected = rejectedNoises;
   turnBuf = []; inSpeech = false; onsetMs = 0;
+  if (voiced >= VAD.MIN_SPEECH_MS && turn.peak < levels().enter * 1.5){
+    rejectedNoises++;
+    log('voice','VOICE',`${reason} · ${Math.round(voiced)}ms barely above the room (peak ${turn.peak.toFixed(3)}, floor ${noiseFloor.toFixed(4)}) — ignored as background`);
+    return startListening();
+  }
   if (voiced < VAD.MIN_SPEECH_MS){
     rejectedNoises++;
     log('voice','VOICE',`${reason} · only ${Math.round(voiced)}ms voiced — ignored`);
@@ -612,18 +638,37 @@ async function finishTurn(reason){
   const t0 = performance.now();
   try {
     mark(turn, 'sttSent');
-    const r = await fetch('/api/listen', {method:'POST',
+    const sttUsed = sttEngine();
+    const r = await fetch('/api/listen?engine=' + encodeURIComponent(sttUsed), {method:'POST',
       headers:apiHeaders({'content-type':'audio/wav'}), body:blob}).then(r => r.json());
     mark(turn, 'sttDone'); turn.stt = r.timing || null;
     const text = cleanTranscript(r.text);
     turn.words = text ? text.split(/\s+/).length : 0;
     const ms = Math.round(performance.now() - t0);
+    if (r.error){
+      // the chosen speech-to-text failed: stop listening and say why; the user decides what to do
+      log('error', 'VOICE', `${ENGINE_LABELS[sttUsed]} couldn't transcribe: ${r.error.slice(0, 220)}. `
+        + 'Fix it, or choose another option in the Voice menu, then click VOICE.');
+      turn.note = 'STT error'; reportTurn(turn);
+      flagSelect('#voiceSel');
+      stopConvo();
+      return;
+    }
     if (!text){
-      log('voice','VOICE', r.error ? `STT error: ${r.error}` : 'nothing transcribed');
-      turn.note = r.error ? 'STT error' : 'nothing transcribed';
+      // say what came back, so a loop of empty turns can be diagnosed from the log
+      const raw = String(r.text || '').trim();
+      const tags = raw.match(/\([^)]*\)|\[[^\]]*\]/g) || [];
+      turn.sttResult = !raw ? 'empty' : (tags.length && !raw.replace(/\([^)]*\)|\[[^\]]*\]/g, '').trim() ? 'sound tags' : 'filler');
+      log('voice','VOICE', !raw ? `nothing transcribed (${Math.round(blob.size/1024)}KB, peak ${turn.peak.toFixed(3)})`
+        : `no words — heard only ${tags.length ? tags.slice(0, 3).join(' ') : `"${raw.slice(0, 40)}"`}`);
+      emptyStreak++;
+      if (emptyStreak === 3)
+        log('note', 'VOICE', `3 turns in a row had no words: background sound is starting turns. `
+          + `Room level ${noiseFloor.toFixed(4)} — the detector is adjusting; a quieter room or a headset mic helps.`);
+      turn.note = 'nothing transcribed';
       reportTurn(turn);
     } else if (pendingPerm){
-      log('voice','VOICE',`transcribed by ElevenLabs in ${ms}ms: "${text}"`);
+      log('voice','VOICE',`transcribed by ${ENGINE_LABELS[sttUsed]} in ${ms}ms: "${text}"`);
       if (answerPermissionByVoice(text)){
         turn.note = 'approval answer'; reportTurn(turn);
         phase = 'busy'; setState('running', 'RUNNING', 'continuing…');
@@ -632,7 +677,9 @@ async function finishTurn(reason){
       log('voice','VOICE','approval pending — say "yes" or "no"');
       return startListening();
     } else {
-      log('voice','VOICE',`transcribed by ElevenLabs in ${ms}ms: "${text}"`);
+      emptyStreak = 0;
+      unflagSelect('#voiceSel');
+      log('voice','VOICE',`transcribed by ${ENGINE_LABELS[sttUsed]} in ${ms}ms: "${text}"`);
       const armed = $('#input').dataset.cmd || '';
       const full = (armed ? armed + ' ' : '') + text;
       $('#input').value = ''; disarm();
@@ -646,12 +693,59 @@ async function finishTurn(reason){
   resumeListening();
 }
 
+// ── voice choice: one menu on the HUD sets both directions ──
+//   ElevenLabs        → ElevenLabs Scribe listens, ElevenLabs speaks
+//   Kokoro + Whisper  → faster-whisper listens, Kokoro speaks (both on your machine)
+//   Browser           → the browser's own recognition and voice
+// Nothing switches automatically. If the chosen engines fail, the log says
+// exactly why and the menu turns red; you choose another option yourself.
+const VOICE = {provider: 'elevenlabs', providers: {}};
+const VOICE_LABELS = {elevenlabs:'ElevenLabs', kokoro:'Kokoro + Whisper', browser:'Browser'};
+const ENGINE_LABELS = {elevenlabs:'ElevenLabs', whisper:'Whisper', kokoro:'Kokoro', browser:'browser'};
+const sttEngine = () => ({elevenlabs:'elevenlabs', kokoro:'whisper'})[VOICE.provider] || 'browser';
+const ttsEngine = () => ({elevenlabs:'elevenlabs', kokoro:'kokoro'})[VOICE.provider] || 'browser';
+
+function flagSelect(sel){
+  const el = $(sel); if (!el) return;
+  el.style.borderColor = 'var(--red)'; el.style.color = 'var(--red)';
+}
+function unflagSelect(sel){
+  const el = $(sel); if (!el) return;
+  el.style.borderColor = ''; el.style.color = '';
+}
+
+function updateVoiceLabels(){
+  RT.stt = sttEngine() !== 'browser';         // server-side listening (with barge-in) vs browser
+  const txt = `${ENGINE_LABELS[sttEngine()]} STT / ${ENGINE_LABELS[ttsEngine()]} TTS`;
+  $('#top-voice') && ($('#top-voice').textContent = 'Voice: ' + txt);
+  sys('voice', txt);
+  if (!convo) $('#mic').textContent = `◉ ${VOICE.provider === 'kokoro' ? 'Local' : VOICE_LABELS[VOICE.provider]} Voice`;
+}
+
+function renderVoiceSelect(){
+  const sel = $('#voiceSel'); if (!sel) return;
+  const names = ['elevenlabs', 'kokoro'].concat(SpeechRecognition || speechSynth ? ['browser'] : []);
+  sel.innerHTML = names.map(n => {
+    const st = VOICE.providers[n];
+    const off = st && !st.ok ? ' (off)' : '';
+    return `<option value="${n}"${VOICE.provider === n ? ' selected' : ''}>🎙 ${VOICE_LABELS[n]}${off}</option>`;
+  }).join('');
+  sel.title = 'Voice (listen + speak)\n' + Object.entries(VOICE.providers).map(([n, v]) =>
+    `${VOICE_LABELS[n]}: listen ${v.listen.ok ? 'ready' : 'off'} (${v.listen.detail}); speak ${v.speak.ok ? 'ready' : 'off'} (${v.speak.detail})`).join('\n');
+  updateVoiceLabels();
+}
+
+function refreshVoice(){
+  return fetch('/api/voice').then(r => r.json()).then(j => { VOICE.providers = j.providers || {}; renderVoiceSelect(); }).catch(() => {});
+}
+
 // ── voice out ──
 function speak(text, turn = null){
   return new Promise(resolve => {
     text = cleanForSpeech(text);
     if (muted || !text) return resolve();
-    const spoken = text.length > 700 ? text.slice(0, 680).replace(/\s+\S*$/,'') + '…' : text;
+    const cap = Math.max(80, Number(UI.max_spoken_chars) || 700);
+    const spoken = text.length > cap ? text.slice(0, cap - 20).replace(/\s+\S*$/,'') + '…' : text;
 
     let finished = false;
     const finish = interrupted => {
@@ -675,7 +769,9 @@ function speak(text, turn = null){
     if (convo && micStream){ phase = 'speaking'; bargeMs = 0; echoFloor = Math.max(noiseFloor, 0.004); }
     mark(turn, 'ttsStart');
 
-    if (!RT.tts && RT.browserTts && speechSynth){
+    const viaBrowser = () => {
+      if (!speechSynth) return finish(false);
+      if (turn) turn.ttsEngine = 'browser';
       try{
         speechSynth.cancel();
         const u = new SpeechSynthesisUtterance(spoken);
@@ -686,14 +782,17 @@ function speak(text, turn = null){
         u.onend = u.onerror = () => finish(false);
         speechSynth.speak(u);
       }catch(_){ finish(false); }
-      return;
-    }
-    if (!RT.tts) return finish(false);
+    };
+    const engine = ttsEngine();
+    if (engine === 'browser') return viaBrowser();
     fetch('/api/speak', {method:'POST', headers:apiHeaders({'content-type':'application/json'}),
-                         body: JSON.stringify({text:spoken})})
+                         body: JSON.stringify({text:spoken, engine})})
       .then(r => {
         if (turn) turn.ttsMs = Number(r.headers.get('x-jarvis-tts-ms')) || null;
-        return r.ok ? r.blob() : Promise.reject(new Error('tts failed'));
+        if (!r.ok) return r.json().catch(() => ({})).then(j => Promise.reject(new Error(j.error || `HTTP ${r.status}`)));
+        if (turn) turn.ttsEngine = r.headers.get('x-jarvis-tts-engine') || engine;
+        unflagSelect('#voiceSel');
+        return r.blob();
       })
       .then(blob => {
         mark(turn, 'ttsReady');
@@ -706,7 +805,16 @@ function speak(text, turn = null){
         player.onended = done; player.onerror = done;
         return player.play().then(() => mark(turn, 'playing'));
       })
-      .catch(() => finish(false));
+      .catch(e => {
+        if (finished) return;
+        // the chosen engine failed: stay silent, show why, let the user choose another
+        log('error', 'TTS', `${ENGINE_LABELS[engine]} couldn't speak: ${String(e.message || e).slice(0, 220)}. `
+          + 'The answer is on screen; choose another option in the Voice menu if this keeps happening.');
+        if (turn) turn.note = turn.note || `TTS failed (${engine})`;
+        flagSelect('#voiceSel');
+        refreshVoice();
+        finish(false);
+      });
   });
 }
 
@@ -725,8 +833,9 @@ async function micToggle(){
       return;
     }
     convo = true;
-    $('#mic').classList.add('on'); $('#mic').textContent = '● ElevenLabs Live';
-    log('voice','VOICE','ElevenLabs voice conversation open · listening · speak over Jarvis to interrupt');
+    $('#mic').classList.add('on'); $('#mic').textContent = `● ${ENGINE_LABELS[sttEngine()]} Live`;
+    log('voice','VOICE',`${VOICE_LABELS[VOICE.provider]} voice conversation open · listening with ${ENGINE_LABELS[sttEngine()]}`
+      + `${UI.barge_in ? ` · speak over ${NAME} to interrupt` : ''}`);
     startListening();
     return;
   }
@@ -738,7 +847,7 @@ async function micToggle(){
     startBrowserRecognition();
     return;
   }
-  log('error','VOICE','no speech recognition available — add ElevenLabs key or use Chrome browser STT');
+  log('error','VOICE','this browser has no speech recognition — choose ElevenLabs or Kokoro + Whisper in the Voice menu');
 }
 
 function stopConvo(){
@@ -748,16 +857,16 @@ function stopConvo(){
   if (stopSpeech) stopSpeech();
   closeMic();
   document.body.classList.remove('speaking');
-  $('#mic').classList.remove('on'); $('#mic').textContent = '◉ VOICE';
+  $('#mic').classList.remove('on'); updateVoiceLabels();
   log('voice','VOICE','conversation closed');
   setState('', 'STANDBY', 'awaiting uplink');
 }
 
-// ── browser speech turn (fallback when no ElevenLabs key) ──
+// ── browser speech turn (the "Browser" voice choice) ──
 function startBrowserRecognition(){
   if (!convo || !SpeechRecognition) return;
   recognition = new SpeechRecognition();
-  recognition.lang = navigator.language || 'en-GB';
+  recognition.lang = UI.browser_language || navigator.language || 'en-GB';
   recognition.interimResults = true;
   recognition.continuous = false;
   let finalText = '';
@@ -798,7 +907,7 @@ $('#cmds').addEventListener('click', e => {
   const b = e.target.closest('.cmd'); if (!b) return;
   const cmd = b.dataset.cmd;
   if (running){
-    log('note','BUSY',`${cmd} not sent — JARVIS is still working.`);
+    log('note','BUSY',`${cmd} not sent — ${NAME} is still working.`);
     return;
   }
 
@@ -857,6 +966,17 @@ document.addEventListener('keydown', e => {
   }
   if (convo) stopConvo();
 });
+$('#voiceSel') && ($('#voiceSel').onchange = e => {
+  const wasLive = convo;
+  if (wasLive) stopConvo();                   // listening differs per choice; restart cleanly
+  VOICE.provider = e.target.value; unflagSelect('#voiceSel');
+  try { localStorage.setItem('assistant.voice', VOICE.provider); } catch(_){}
+  renderVoiceSelect();
+  const st = VOICE.providers[VOICE.provider];
+  log('voice', 'VOICE', `voice → ${VOICE_LABELS[VOICE.provider]} (listen: ${ENGINE_LABELS[sttEngine()]}, speak: ${ENGINE_LABELS[ttsEngine()]})`
+    + (st && !st.ok ? ` · warning: ${!st.listen.ok ? st.listen.detail : st.speak.detail}` : '')
+    + (wasLive ? ' · click VOICE to start again' : ''));
+});
 $('#mute').onclick = () => {
   muted = !muted; const b=$('#mute');
   b.textContent = muted?'🔇':'🔊'; b.classList.toggle('on',!muted); b.classList.toggle('off',muted);
@@ -894,19 +1014,27 @@ setInterval(async () => {
   defaultTip = $('#tip').textContent;
   try {
     const s = await fetch('/api/status').then(r=>r.json());
-    RT.tts = s.tts==='elevenlabs'; RT.stt = s.stt==='elevenlabs';
+    VOICE.providers = s.voice_providers || {};
+    let saved = ''; try { saved = localStorage.getItem('assistant.voice') || ''; } catch(_){}
+    VOICE.provider = VOICE_LABELS[saved] ? saved : (VOICE_LABELS[s.voice_default] ? s.voice_default : 'elevenlabs');
+    renderVoiceSelect();
+    setInterval(refreshVoice, 30000);
+    if (s.ui){
+      NAME = s.ui.name || NAME;
+      UI = {...UI, ...s.ui};
+      Object.assign(VAD, s.ui.vad || {});      // listening timings from assistant.yaml
+    }
     RT.browserStt = !!SpeechRecognition; RT.browserTts = !!speechSynth;
 
     const port = location.port || '8730';
     sys('gw', `online · :${port}`, 'ok');
     sys('brain', s.runtime === 'hermes' ? 'Hermes Agent' : 'Hermes offline', s.runtime === 'hermes' ? 'ok' : 'warn');
-    sys('voice', `${RT.stt?'ElevenLabs STT':'Browser STT'} / ${RT.tts?'ElevenLabs TTS':'Browser TTS'}`, (RT.browserStt||RT.stt) ? '' : 'warn');
+
     sys('profile', s.profile || 'default');
     sys('runtime', s.runtime === 'hermes' ? (s.hermes_mode || 'hermes').split(' ')[0] : (s.runtime || '—'), s.runtime === 'hermes' ? 'ok' : 'warn');
     sys('clock', now());
     $('#top-gw').textContent = `Gateway: online ${location.origin}`;
     $('#top-profile').textContent = 'Profile: ' + (s.profile || 'default');
-    $('#top-voice').textContent = 'Voice: ' + (RT.stt ? 'ElevenLabs STT' : (RT.browserStt ? 'browser STT' : s.stt)) + ' / ' + (RT.tts ? 'ElevenLabs TTS' : 'browser TTS');
     const tools = (s.tools || []).slice(0, 12);
     $('#toolsList').innerHTML = tools.length ? tools.map(t => `<span class="chip">${esc(t)}</span>`).join('') : '<span class="chip ghost">Hermes tool list unavailable — set HERMES_CMD if needed</span>';
 
@@ -919,8 +1047,9 @@ setInterval(async () => {
     }).catch(() => {});
     log('status', 'BOOT',
         `gateway online · ${s.runtime} core · profile=${s.profile || 'default'} · permission=${s.permission}`);
-    log('voice', 'VOICE', `channel ready — ${RT.stt ? 'ElevenLabs STT' : (RT.browserStt ? 'browser STT' : s.stt)} / ${RT.tts ? 'ElevenLabs TTS' : 'browser TTS'}`);
-    $('#mic').textContent = RT.stt ? '◉ ElevenLabs Voice' : '◉ Browser Voice';
+    log('voice', 'VOICE', `voice: ${VOICE_LABELS[VOICE.provider]} · `
+      + Object.entries(VOICE.providers).map(([k, v]) => `${VOICE_LABELS[k]} ${v.ok ? 'ready' : 'off'}`).join(' · '));
+    updateVoiceLabels();
     setState('', 'STANDBY', 'awaiting uplink');
   } catch(e){
     sys('gw','offline','warn');

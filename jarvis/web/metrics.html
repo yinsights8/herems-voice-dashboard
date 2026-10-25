@@ -152,6 +152,8 @@ const STAGES = [
 const SERVER_ROWS = [
   ['hermes_first_text_ms', 'Hermes first word (server)'],
   ['hermes_total_ms',      'Hermes total (server)'],
+  ['model_ms',             '  of which: model calls'],
+  ['hermes_overhead_ms',   '  of which: tools + Hermes work'],
   ['session_new_ms',       'New session'],
   ['lock_wait_ms',         'Waiting behind another run'],
 ];
@@ -252,8 +254,8 @@ function renderStageTable(win){
     const v = win.map(r => stageOf(r, key));
     return {label, col, v};
   }).concat(SERVER_ROWS.map(([key, label]) => ({label, col:null, v: win.map(r => (r.server || {})[key])})))
-    .concat([{label:'ElevenLabs STT', col:null, v: win.map(r => (r.stt || {}).elevenlabs_stt_ms)},
-             {label:'ElevenLabs TTS', col:null, v: win.map(r => r.tts_ms)}]);
+    .concat([{label:'Speech-to-text (server)', col:null, v: win.map(r => (r.stt || {}).stt_ms ?? (r.stt || {}).elevenlabs_stt_ms)},
+             {label:'Text-to-speech (server)', col:null, v: win.map(r => r.tts_ms)}]);
   const body = rows.filter(r => r.v.some(x => typeof x === 'number')).map(r => {
     const n = r.v.filter(x => typeof x === 'number').length;
     return `<tr><td>${r.col ? `<span class="sw" style="background:${r.col}"></span>` : '<span class="sw"></span>'}${esc(r.label)}</td>`
@@ -313,8 +315,9 @@ function scatter(el, pts, xl, yl, col){
 
 function renderInput(win){
   const voice = win.filter(r => r.kind === 'voice');
-  const pts = voice.map(r => ({x: r.speech_ms, y: (r.stt || {}).elevenlabs_stt_ms ?? stageOf(r, 'upload + STT'),
-    t: `${secs(r.speech_ms)}s of speech → STT ${msTxt((r.stt || {}).elevenlabs_stt_ms ?? stageOf(r, 'upload + STT'))} ms`}))
+  const sttMs = r => (r.stt || {}).stt_ms ?? (r.stt || {}).elevenlabs_stt_ms ?? stageOf(r, 'upload + STT');
+  const pts = voice.map(r => ({x: r.speech_ms, y: sttMs(r),
+    t: `${secs(r.speech_ms)}s of speech → ${(r.stt || {}).engine || 'STT'} ${msTxt(sttMs(r))} ms`}))
     .filter(p => typeof p.x === 'number' && typeof p.y === 'number');
   scatter('#sttScatter', pts, v => secs(v) + 's', v => secs(v) + 's', '#a884ff');
 
@@ -406,6 +409,11 @@ function renderDetail(){
     ['answer', r.answer_chars != null ? r.answer_chars + ' chars' : '—'],
     ['spoke', r.spoke_ms != null ? secs(r.spoke_ms) + 's' + (r.interrupted ? ' (interrupted)' : '') : '—'],
     ['tools · approvals', `${r.tools ?? 0} · ${r.approvals ?? 0}`],
+    ['model calls', sv.api_calls != null ? `${sv.api_calls} (${sv.model_calls_ms || '—'} ms)` : '—'],
+    ['model · around it', sv.model_ms != null ? `${secs(sv.model_ms)}s · ${secs(sv.hermes_overhead_ms)}s` : '—'],
+    ['tokens in · out', sv.tokens_in != null ? `${sv.tokens_in} · ${sv.tokens_out}` : '—'],
+    ['listened with', (r.stt || {}).engine || (r.kind === 'voice' ? 'elevenlabs' : '—')],
+    ['spoke with', r.tts_engine || '—'],
     ['noise · peak', r.noise_floor != null ? `${r.noise_floor} · ${r.peak_level}` : '—'],
     ['persona sent', sv.persona_sent ? `yes (${sv.prompt_chars} chars)` : (sv.prompt_chars != null ? `no (${sv.prompt_chars} chars)` : '—')],
     ['note', r.note || '—'],

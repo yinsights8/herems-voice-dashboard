@@ -23,7 +23,7 @@ import sys
 import threading
 import time
 
-import acp_runtime
+from jarvis.hermes import acp as acp_runtime
 
 _SESSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$")
 _ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
@@ -41,6 +41,9 @@ WORKDIR = os.path.expanduser(os.environ.get("JARVIS_WORKDIR", os.getcwd()))
 PERMISSION = os.environ.get("JARVIS_PERMISSION", os.environ.get("HERMES_PERMISSION", "normal")).strip().lower()
 RUNTIME = os.environ.get("JARVIS_RUNTIME", "auto").strip().lower()  # auto|hermes|mock
 IDLE_TIMEOUT = int(os.environ.get("JARVIS_TIMEOUT", "120"))
+# `hermes chat -Q` prints nothing while tools run, so the CLI path can't tell a
+# long tool from a hang: it uses the (longer) tool limit.
+TOOL_TIMEOUT = int(os.environ.get("JARVIS_TOOL_TIMEOUT", "900"))
 # Raw transcripts can contain private prompts. Logging is off by default.
 RAW_LOG = os.environ.get("JARVIS_RAW_LOG", "").strip()
 TOOLSETS = os.environ.get("HERMES_TOOLSETS", "").strip()
@@ -201,7 +204,7 @@ def compose_prompt(message, system=None):
     if not system:
         return message
     return (f"{system}\n\n## Current user request\n{message}\n\n"
-            "Answer the request now. Return only the words JARVIS should say aloud; "
+            f"Answer the request now. Return only the words {os.environ.get('ASSISTANT_NAME') or 'Jarvis'} should say aloud; "
             "never include session IDs, runtime metadata, headings, or process narration.")
 
 
@@ -234,6 +237,14 @@ def hermes_tools_snapshot(limit=36, refresh=False):
         if tools:
             _TOOLS_CACHE = tools
         return list(tools)
+
+
+def cached_tool_count():
+    """Tool count for a turn's status line, without ever waiting: the list is
+    filled in the background at start-up (`hermes tools list` takes seconds),
+    and a turn shows 0 until it's ready rather than stalling on it."""
+    cache = _TOOLS_CACHE
+    return len(cache) if cache else 0
 
 
 def _list_tools(limit):
@@ -291,7 +302,7 @@ def _run_hermes_locked(message, session_id=None, system=None, timing=None):
     started = _mono_ms()
     cmd = build_command(message, session_id, system)
     t = time.monotonic()
-    tool_count = len(hermes_tools_snapshot())
+    tool_count = cached_tool_count()
     timing["tools_snapshot_ms"] = _since(t)
     yield dict(t="status", model=MODEL or "Hermes default", tools=tool_count,
                mcp=[], permission=PERMISSION, profile=PROFILE, runtime="hermes",
@@ -315,6 +326,7 @@ def _run_hermes_locked(message, session_id=None, system=None, timing=None):
     lock = threading.Lock()
     done = threading.Event()
     errbuf = collections.deque(maxlen=120)
+    seen = [time.monotonic()]
     raw = None
     if RAW_LOG:
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
@@ -345,6 +357,7 @@ def _run_hermes_locked(message, session_id=None, system=None, timing=None):
                 if "hermes_first_stderr_ms" not in timing:
                     timing["hermes_first_stderr_ms"] = _since(t_spawn)
                 errbuf.append(ln.rstrip())
+                seen[0] = time.monotonic()
         except Exception:
             pass
 
@@ -366,12 +379,13 @@ def _run_hermes_locked(message, session_id=None, system=None, timing=None):
             if line is None:
                 if proc.poll() is not None and done.is_set():
                     break
-                if time.monotonic() - last > IDLE_TIMEOUT:
+                limit = max(IDLE_TIMEOUT, TOOL_TIMEOUT)
+                if time.monotonic() - max(last, seen[0]) > limit:
                     proc.kill()
                     err = " | ".join(list(errbuf)[-3:])
                     timing["hermes_total_ms"] = _since(t_spawn)
                     yield dict(t="error", timing=timing,
-                               message=(f"Hermes went quiet for {IDLE_TIMEOUT}s and was stopped. " + err)[:400])
+                               message=(f"Hermes went quiet for {limit}s and was stopped. " + err)[:400])
                     return
                 time.sleep(0.05)
                 continue
@@ -449,7 +463,7 @@ def run(message, session_id=None, system=None, timing=None, full_system=None):
             timing["lock_wait_ms"] = _since(t)
             timing["mode"] = "acp"
             yield dict(t="status", model=MODEL or "Hermes default",
-                       tools=len(hermes_tools_snapshot()), mcp=[], permission=PERMISSION,
+                       tools=cached_tool_count(), mcp=[], permission=PERMISSION,
                        profile=PROFILE, runtime="hermes-acp", session_id=session_id)
             gen = acp_runtime.run(acp_command(), WORKDIR, _child_env(),
                                   compose_prompt(message, system), session_id, timing,

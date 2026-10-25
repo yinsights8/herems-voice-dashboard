@@ -16,6 +16,9 @@
 .latstrip .lsbar i{display:block;min-width:2px}
 .latstrip b{color:var(--ink);font-weight:500}
 .latstrip a{color:var(--cyan);text-decoration:none}
+/* voice dropdown in the mission bar */
+#voiceSel{cursor:pointer;color:var(--cyan);-webkit-appearance:none;appearance:none;padding-right:10px;max-width:190px}
+#voiceSel option{background:#061722;color:#e8fbff}
 /* leftover "01 TOP CHANNELS" label covered the reactor status */
 .reactor:before{display:none}
 </style>
@@ -110,6 +113,7 @@
       <button id="run" class="ctl run" title="Send (⌘↵)">Transmit to JARVIS ▸</button>
       <button id="showCommands" class="ctl aux">Show Commands</button>
       <button id="missionBtn" class="ctl aux">Mission Control</button>
+      <select id="voiceSel" class="ctl aux" title="Voice: listening and speaking engines"><option>🎙 ElevenLabs</option></select>
       <button id="mute" class="ctl mute on" title="Mute Jarvis speech">🔊</button>
       <button id="clearBtn" class="ctl aux">Clear</button>
       <a id="metricsBtn" class="ctl aux" href="/metrics.html" target="_blank" style="text-decoration:none;display:grid;place-items:center">Metrics ↗</a>

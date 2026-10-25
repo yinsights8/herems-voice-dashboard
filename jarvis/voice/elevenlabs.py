@@ -15,6 +15,9 @@ import urllib.request
 # Rachel — calm, British-adjacent. Override with ELEVENLABS_VOICE_ID.
 DEFAULT_VOICE = "21m00Tcm4TlvDq8ikWAM"
 MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
+# Speech-to-text language (ISO code, e.g. "en"). Blank = Scribe guesses per clip,
+# which goes wrong on short or noisy clips.
+STT_LANGUAGE = os.environ.get("ELEVENLABS_STT_LANGUAGE", "").strip()
 
 
 def available():
@@ -76,6 +79,9 @@ def transcribe(audio, mime="audio/webm"):
     body = b"".join([
         b"--", b, b"\r\n",
         b'Content-Disposition: form-data; name="model_id"\r\n\r\nscribe_v1\r\n',
+        *([b"--", b, b"\r\n",
+           b'Content-Disposition: form-data; name="language_code"\r\n\r\n',
+           STT_LANGUAGE.encode(), b"\r\n"] if STT_LANGUAGE else []),
         b"--", b, b"\r\n",
         f'Content-Disposition: form-data; name="file"; filename="turn.{ext}"\r\n'.encode(),
         f"Content-Type: {mime}\r\n\r\n".encode(),

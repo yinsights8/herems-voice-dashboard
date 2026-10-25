@@ -1,9 +1,9 @@
 """
 Summarise JARVIS turn latency from logs/timings.jsonl.
 
-    python3 timings_report.py              # all turns
-    python3 timings_report.py --last 20    # most recent 20 turns
-    python3 timings_report.py --kind voice # voice turns only
+    python3 scripts/timings_report.py              # all turns
+    python3 scripts/timings_report.py --last 20    # most recent 20 turns
+    python3 scripts/timings_report.py --kind voice # voice turns only
 
 Shows, for each stage, the median, p90 and max in milliseconds, so you can see
 where a slow reply actually spends its time.
@@ -14,7 +14,7 @@ import os
 import pathlib
 import statistics
 
-ROOT = pathlib.Path(__file__).resolve().parent
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT = pathlib.Path(os.path.expanduser(os.environ.get("JARVIS_LOG_DIR", str(ROOT / "logs")))) / "timings.jsonl"
 
 SERVER_KEYS = [

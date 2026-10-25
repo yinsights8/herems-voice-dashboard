@@ -16,19 +16,22 @@ A local, voice-enabled JARVIS dashboard for [Hermes Agent](https://github.com/No
 - Access to the active Hermes profile's tools, skills, browser, memory, and MCP integrations
 - Local-only HTTP server bound to `127.0.0.1`
 
-## Prerequisites
+## Setup
 
-1. macOS or Linux with Python 3 and a modern Chromium browser.
-2. Hermes Agent installed and configured:
+**Full step-by-step guide: [SETUP.md](SETUP.md)** (Windows, macOS and Linux: Python environment, Hermes, `.env`, voice options, first run and troubleshooting).
+
+In short: install and set up Hermes Agent until `hermes chat -q "Say online"` answers, then:
 
 ```bash
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
-hermes setup
+git clone https://github.com/Itsme23476/jarvis-hermes-dashboard.git
+cd jarvis-hermes-dashboard
+python -m venv .venv && . .venv/bin/activate     # Windows: .\.venv\Scripts\Activate.ps1
+pip install -e ".[yaml]"
+cp .env.example .env                             # Windows: copy .env.example .env
+python -m jarvis                                 # or ./start.sh, or start.bat on Windows
 ```
 
-Confirm that `hermes chat -q "Say online"` works before installing the dashboard.
-
-## One-command install
+## One-command install (macOS / Linux)
 
 ```bash
 git clone https://github.com/Itsme23476/jarvis-hermes-dashboard.git && \
@@ -118,17 +121,36 @@ Browser HUD
   └─ response → ElevenLabs TTS or browser speech synthesis
 ```
 
-Key files:
+Project layout:
 
 ```text
-server.py       local HTTP API and NDJSON streaming
-runtime.py      Hermes CLI subprocess and session continuity
-commands.py     dashboard slash commands and mission queue
-voice.py        optional ElevenLabs STT/TTS proxy
-persona.md      concise spoken JARVIS persona
-ui/             dependency-free HTML/CSS/JavaScript HUD
-install.sh      first-run setup and launch
-start.sh        local launcher
+jarvis/                     the Python package (run with `python -m jarvis`)
+  __main__.py               entry point
+  server.py                 local HTTP API, NDJSON streaming, static files
+  settings.py               loads config/assistant.yaml into the environment
+  commands.py               dashboard slash commands and mission queue
+  hermes/
+    runtime.py              picks ACP or `hermes chat` per turn; session continuity
+    acp.py                  persistent hermes-acp client (JSON-RPC over stdio)
+  voice/
+    stt.py                  speech-to-text: ElevenLabs Scribe or Whisper
+    tts.py                  text-to-speech: ElevenLabs or Kokoro
+    elevenlabs.py           ElevenLabs API calls (key stays server-side)
+  web/                      dependency-free HUD (index.html, app.js, styles.css)
+                            and the latency monitor (metrics.html)
+config/
+  assistant.yaml            all tunable settings
+  persona.md                how the assistant speaks
+scripts/
+  timings_report.py         latency summary from logs/timings.jsonl
+  bench_voice.py            benchmark local Kokoro / Whisper setups
+  acp_probe.py              check that hermes-acp starts and streams
+docs/                       plans, results, screenshot
+logs/                       per-turn timings (no words stored)
+models/                     Kokoro ONNX model files (onnx mode only)
+.env                        private keys, not committed
+start.sh / start.bat        launchers (macOS/Linux, Windows)
+install.sh                  first-run setup and launch
 ```
 
 ## Security
@@ -146,7 +168,7 @@ start.sh        local launcher
 
 ```bash
 cd ~/jarvis-hermes-dashboard
-./start.sh
+./start.sh          # or: python -m jarvis   (Windows: start.bat)
 ```
 
 To use another port:

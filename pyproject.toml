@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis-hermes-dashboard"
+version = "0.4.0"
+description = "A local voice HUD for Hermes Agent"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = []          # the core runs on the standard library
+
+[project.optional-dependencies]
+yaml = ["pyyaml"]                                  # optional: full YAML parser for config/assistant.yaml
+local-voice = ["kokoro-onnx", "faster-whisper", "numpy"]   # in-process Kokoro TTS and Whisper STT
+
+[project.scripts]
+jarvis = "jarvis.server:main"
+
+[tool.setuptools]
+packages = ["jarvis", "jarvis.hermes", "jarvis.voice"]
+
+[tool.setuptools.package-data]
+jarvis = ["web/*"]
