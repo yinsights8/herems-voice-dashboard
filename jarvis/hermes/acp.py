@@ -325,6 +325,7 @@ class AcpClient:
         box = queue.Queue()
         with self._plock:
             self._pending[rid] = box.put
+        turn["steers"].append({"text": text, "at": time.monotonic()})
         try:
             self._send({"jsonrpc": "2.0", "id": rid, "method": "session/prompt",
                         "params": {"sessionId": turn["session"],
@@ -389,11 +390,30 @@ class AcpClient:
             # everything Hermes did around the model calls: tools, memory, its own bookkeeping
             timing["hermes_overhead_ms"] = max(0, timing.get("hermes_total_ms", _ms(t0)) - model_ms)
 
+    def _dropped_steers(self, timing):
+        """Steers the model never saw. Hermes delivers a steer just before its next
+        model call; one that arrives after the final call is handed back by the agent
+        and ignored by hermes-acp. So: delivered iff a model call started after it was
+        sent (start = log-line time minus that call's latency). Returns the text to
+        send as a follow-up message, or None. Unknown (no model-call log) counts as
+        delivered, so nothing is ever sent twice on a guess."""
+        turn = self.turn or {}
+        steers, api = turn.get("steers") or [], turn.get("api") or []
+        if not steers:
+            return None
+        timing["steers"] = len(steers)
+        if not api:
+            return None
+        starts = [c["at"] - c["ms"] / 1000 for c in api]
+        dropped = [s["text"] for s in steers if not any(st >= s["at"] - 0.05 for st in starts)]
+        timing["steers_dropped"] = len(dropped)
+        return " ".join(dropped) or None
+
     # ── one turn ─────────────────────────────────────────────
     def prompt(self, session_id, text, timing):
         """Send one prompt; yield dashboard events until Hermes finishes."""
         q = queue.Queue()
-        self.turn = {"session": session_id, "q": q, "perms": {}, "api": [], "seen": time.monotonic()}
+        self.turn = {"session": session_id, "q": q, "perms": {}, "api": [], "steers": [], "seen": time.monotonic()}
         rid = next(self._ids)
         with self._plock:
             self._pending[rid] = lambda m: q.put(("response", m))
@@ -492,9 +512,11 @@ class AcpClient:
                     stop = (payload.get("result") or {}).get("stopReason")
                     timing["stop_reason"] = stop
                     self._turn_breakdown(timing, tools, t0)
+                    followup = self._dropped_steers(timing)
                     if first and stop != "cancelled":
                         yield dict(t="delta", text="Hermes completed without textual output.")
-                    yield dict(t="complete", session_id=session_id, ms=_ms(t0), timing=timing)
+                    yield dict(t="complete", session_id=session_id, ms=_ms(t0), timing=timing,
+                               followup=followup)
                     return
         finally:
             responded = done

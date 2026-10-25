@@ -302,6 +302,11 @@ function handle(ev){
       log('complete', 'COMPLETE', ev.ms!=null?`run completed in ${ev.ms}ms`:'run completed');
       renderAnswer(true);
       if (curTurn){ mark(curTurn, 'complete'); curTurn.srv = ev.timing || null; curTurn.answerChars = answer.trim().length; }
+      if (ev.followup){
+        // said mid-task but it reached Hermes after its last step, so the model never saw it
+        nextUp = nextUp ? ev.followup + ' ' + nextUp : ev.followup;
+        log('note','STEER',`arrived after ${NAME}'s last step — asking it next: "${ev.followup.slice(0, 80)}"`);
+      }
       speakDone = speakThisRun ? speak(answer, curTurn) : Promise.resolve();
       break;
     case 'error':
