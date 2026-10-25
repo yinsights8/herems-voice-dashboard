@@ -107,6 +107,7 @@ async function pollSystem(){
     txt('#modelV', m.model || 'Hermes default'); q('#modelV').title = model;
     txt('#modelChip', model);
     txt('#sessV', sys.session ? sys.session.slice(0, 10) + '…' : 'new on next turn');
+    if (sys.session !== curSession){ curSession = sys.session; if (chatView === 'current') refreshChat({first: true}); }
     const busy = q('#busyBadge'); busy.textContent = sys.busy ? 'working' : 'idle';
     const mode = (sys.hermes_mode || '—').split(' ')[0];
     q('#roL').innerHTML = `<b>${sys.cpu_pct == null ? '—' : sys.cpu_pct.toFixed(0) + '%'}</b>CPU<br>${sys.ram_total ? fmtGB(sys.ram_used) + 'G' : '—'}<br>RAM`;
@@ -178,6 +179,93 @@ setInterval(() => {
   if (toolName && document.body.classList.contains('running'))
     doing.textContent = `running ${toolName} · ${Math.floor((Date.now() - toolAt) / 1000)}s`;
 }, 500);
+
+/* ══════════ conversation + past sessions (expanded response panel) ══════════
+   Read from Hermes's own session store through /api/sessions, so it includes
+   tool calls, steers, and sessions from the CLI, TUI, Discord and so on. */
+const root = document.documentElement, chatLog = q('#chatLog'), expandBtn = q('#expandBtn');
+let chatView = 'current', viewing = null, scope = 'dashboard';
+const when = ts => ts ? new Date(ts * 1000).toLocaleString('en-GB', {day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'}) : '';
+const hhmm = ts => ts ? new Date(ts * 1000).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'}) : '';
+
+function setExpanded(on){
+  root.classList.toggle('chat-open', on);
+  expandBtn.textContent = on ? '⤡ collapse' : '⤢ expand';
+  try { localStorage.setItem('hud.chat', on ? '1' : '0'); } catch (_) {}
+  if (on) refreshChat();
+}
+expandBtn.onclick = () => setExpanded(!root.classList.contains('chat-open'));
+q('#chatTabs').onclick = e => {
+  const b = e.target.closest('button[data-view]'); if (!b) return;
+  chatView = b.dataset.view; viewing = null;
+  q('#chatTabs').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  refreshChat();
+};
+
+function renderMessages(msgs){
+  return msgs.map(m => {
+    const t = esc(m.text || '');
+    if (m.kind === 'user') return `<div class="msg me"><small>You · ${hhmm(m.at)}</small>${t}</div>`;
+    if (m.kind === 'steer') return `<div class="msg steer">↪ ${t}</div>`;
+    if (m.kind === 'tool') return `<details class="tool"><summary>⚙ ${esc(m.tool)} result</summary><pre>${t || '(empty)'}</pre></details>`;
+    return (m.tools && m.tools.length ? `<div class="toolline">⚙ ${m.tools.map(esc).join(' · ')}</div>` : '')
+         + (t ? `<div class="msg bot"><small>${esc(NAME)} · ${hhmm(m.at)}</small>${t}</div>` : '');
+  }).join('');
+}
+
+async function showSession(id, opts = {}){
+  try {
+    const d = await getJSON('/api/sessions/' + encodeURIComponent(id));
+    const head = opts.past ? `<div class="viewbar"><button class="iconbtn" id="backBtn" type="button">← all sessions</button>`
+      + `<b>${esc(d.title)}</b><span>${esc(d.source)}</span><span>read-only</span></div>` : '';
+    const atBottom = chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 40;
+    chatLog.innerHTML = head + (renderMessages(d.messages) || '<div class="empty">No messages yet.</div>');
+    if (opts.past) q('#backBtn').onclick = () => { viewing = null; refreshChat(); };
+    if (!opts.past || opts.scroll !== false) if (atBottom || opts.first) chatLog.scrollTop = chatLog.scrollHeight;
+  } catch (s){
+    chatLog.innerHTML = `<div class="empty">${s === 404 && !opts.past ? 'This conversation has no saved messages yet.'
+      : 'Couldn’t read Hermes’s session history' + (s === 503 ? ' (state.db not found — set HERMES_STATE_DB).' : '.')}</div>`;
+  }
+}
+
+async function showSessionList(){
+  try {
+    const d = await getJSON(`/api/sessions?scope=${scope}&limit=60`);
+    const toggle = `<div class="viewbar"><span>Showing</span>`
+      + `<button class="iconbtn" id="scopeBtn" type="button">${scope === 'dashboard' ? 'Robin only — show all sources' : 'all sources — show Robin only'}</button></div>`;
+    chatLog.innerHTML = toggle + (d.sessions.length ? d.sessions.map(s =>
+      `<button class="sessrow${s.current ? ' cur' : ''}" type="button" data-id="${esc(s.id)}">`
+      + `<span class="src">${esc(s.source)}</span><span class="t">${esc(s.title)}</span>`
+      + `<span class="meta">${when(s.last_at)} · ${s.messages} msgs</span></button>`).join('')
+      : '<div class="empty">No sessions found.</div>');
+    q('#scopeBtn').onclick = () => { scope = scope === 'dashboard' ? 'all' : 'dashboard'; showSessionList(); };
+    chatLog.querySelectorAll('.sessrow').forEach(b => b.onclick = () => { viewing = b.dataset.id; refreshChat({first: true}); });
+    chatLog.scrollTop = 0;
+  } catch (s){
+    chatLog.innerHTML = `<div class="empty">Couldn’t list sessions${s === 404 ? ': restart Robin to enable this view.' : '.'}</div>`;
+  }
+}
+
+let curSession = null;
+function refreshChat(opts = {}){
+  if (!root.classList.contains('chat-open')) return;
+  const other = chatView === 'sessions';
+  root.classList.toggle('view-other', other);
+  if (other) return viewing ? showSession(viewing, {past: true, first: opts.first}) : showSessionList();
+  if (!curSession){ chatLog.innerHTML = `<div class="empty">No conversation yet. It appears here after ${esc(NAME)}'s first answer.</div>`; return; }
+  showSession(curSession, {first: opts.first});
+}
+// refresh the open conversation after each answer (Hermes saves it as the turn ends)
+new MutationObserver(muts => {
+  for (const m of muts) for (const n of m.addedNodes){
+    const kind = n instanceof HTMLElement && (n.querySelector('.kind') || {}).textContent;
+    if ((kind === 'COMPLETE' || kind === 'ERROR' || kind === 'STEER') && chatView === 'current'){
+      setTimeout(async () => { await pollSystem(); refreshChat(); }, 900);
+      setTimeout(() => refreshChat(), 3000);
+    }
+  }
+}).observe(q('#log'), {childList: true});
+try { if (localStorage.getItem('hud.chat') === '1') setTimeout(() => setExpanded(true), 400); } catch (_) {}
 
 /* ══════════ neural core ══════════
    A glowing knot at the centre, filaments flowing out across a dark plane,

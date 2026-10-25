@@ -55,7 +55,13 @@
     <div class="latstrip" id="latStrip">latency · no turns yet · <a href="/metrics.html" target="_blank">metrics ↗</a></div>
 
     <div class="panel" id="responseWrap">
-      <div class="rhead"><span>JARVIS response</span><button class="iconbtn" id="clearBtn" type="button">clear</button><span class="rtag" id="rtag">IDLE</span></div>
+      <div class="rhead">
+        <span>JARVIS response</span><button class="iconbtn" id="clearBtn" type="button">clear</button>
+        <span class="tabs" id="chatTabs"><button type="button" data-view="current" class="on">This conversation</button><button type="button" data-view="sessions">All sessions</button></span>
+        <button class="iconbtn" id="expandBtn" type="button" title="Show the whole conversation and past sessions">⤢ expand</button>
+        <span class="rtag" id="rtag">IDLE</span>
+      </div>
+      <div class="chatlog" id="chatLog"></div>
       <div class="rbody" id="response"><span class="rplaceholder">Standing by. Speak, or type below.</span></div>
     </div>
 

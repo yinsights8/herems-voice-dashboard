@@ -130,7 +130,7 @@ main{position:relative;z-index:1;display:grid;grid-template-columns:minmax(280px
 
 #responseWrap{padding:0;overflow:hidden;flex:0 0 auto}
 .rhead{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--dim);text-transform:uppercase}
-.rtag{margin-left:auto;font-size:9.5px;border:1px solid var(--line);border-radius:999px;padding:2px 9px;color:var(--dim)}
+.rtag{margin-left:8px;font-size:9.5px;border:1px solid var(--line);border-radius:999px;padding:2px 9px;color:var(--dim)}
 .rtag.run{color:var(--A2);border-color:rgba(var(--acc2),.5);animation:blink 1.2s steps(1) infinite}
 .rtag.done{color:rgb(var(--ok));border-color:rgba(var(--ok),.5)}.rtag.err{color:rgb(var(--err));border-color:rgba(var(--err),.5)}
 .rbody{max-height:120px;min-height:52px;overflow:auto;padding:12px 16px;font-size:14.5px;line-height:1.6;white-space:pre-wrap}
@@ -138,6 +138,37 @@ main{position:relative;z-index:1;display:grid;grid-template-columns:minmax(280px
 .cur{display:inline-block;width:7px;height:15px;background:var(--A);vertical-align:-2px;animation:blink 1s steps(1) infinite}
 .iconbtn{cursor:pointer;background:none;border:1px solid var(--line);border-radius:8px;color:var(--mut);font:10px var(--mono);padding:4px 8px;letter-spacing:.06em}
 .iconbtn:hover{color:var(--A);border-color:rgba(var(--acc),.5)}
+/* expanded response panel: the conversation and past sessions */
+#expandBtn{margin-left:auto}
+.rhead .tabs{display:none;gap:4px;margin-left:6px}
+html.chat-open .rhead .tabs{display:flex}
+.tabs button{cursor:pointer;background:none;border:1px solid var(--line);border-radius:999px;color:var(--dim);font:10px var(--mono);letter-spacing:.06em;padding:3px 10px;text-transform:none}
+.tabs button.on{color:var(--A);border-color:rgba(var(--acc),.55)}
+.chatlog{display:none}
+html.chat-open #responseWrap{flex:1 1 auto;display:flex;flex-direction:column;min-height:0}
+html.chat-open .chatlog{display:flex;flex-direction:column;gap:9px;flex:1 1 auto;min-height:0;overflow:auto;padding:14px 16px;scrollbar-width:thin}
+html.chat-open .stage{flex:0 0 160px;min-height:130px}
+html.chat-open .stage .readout,html.chat-open .stage .name i{display:none}
+html.chat-open .rbody{max-height:26vh;border-top:1px solid var(--line)}
+html.chat-open.view-other .rbody{display:none}
+.msg{max-width:86%;padding:8px 12px;border-radius:12px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+.msg small{display:block;font:10px var(--mono);color:var(--dim);margin-bottom:2px;white-space:nowrap}
+.msg.me{align-self:flex-end;background:rgba(var(--acc),.12);border:1px solid rgba(var(--acc),.3)}
+.msg.bot{align-self:flex-start;background:rgba(var(--acc),.03);border:1px solid var(--line)}
+.msg.steer{align-self:flex-end;font:12px/1.5 var(--mono);color:var(--mut);border:1px dashed rgba(var(--acc),.35);background:none}
+.toolline{align-self:flex-start;font:11px var(--mono);color:var(--A2)}
+details.tool{align-self:flex-start;max-width:86%;font:11px var(--mono);color:var(--mut)}
+details.tool summary{cursor:pointer;color:var(--dim)}
+details.tool pre{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:6px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;max-height:220px;overflow:auto}
+.sessrow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 12px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;cursor:pointer;align-items:baseline;background:none;color:var(--ink);text-align:left;font:inherit;width:100%}
+.sessrow:hover{border-color:rgba(var(--acc),.5)}
+.sessrow .src{font:10px var(--mono);color:var(--A2);border:1px solid rgba(var(--acc2),.4);border-radius:999px;padding:1px 7px}
+.sessrow .t{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sessrow .meta{font:10.5px var(--mono);color:var(--dim);white-space:nowrap}
+.sessrow.cur{border-color:rgba(var(--acc),.45)}.sessrow.cur .t::after{content:"  · current";color:var(--A);font:10px var(--mono)}
+.viewbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font:11px var(--mono);color:var(--dim);padding-bottom:6px;border-bottom:1px solid var(--line)}
+.viewbar b{color:var(--ink);font:500 13px var(--disp)}
+
 /* approval card app.js appends */
 #permCard .ctl{cursor:pointer;border-radius:8px;border:1px solid rgba(var(--acc),.4);background:transparent;color:var(--ink);font:11px var(--mono);padding:7px 12px}
 #permCard .ctl.run{background:var(--A);color:#fff;border-color:var(--A)}

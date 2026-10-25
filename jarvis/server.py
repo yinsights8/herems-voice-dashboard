@@ -51,6 +51,8 @@ from jarvis.voice import stt, tts                # noqa: E402
 from jarvis.voice import elevenlabs as voice     # noqa: E402
 from jarvis import system                       # noqa: E402
 from jarvis.hermes import acp                   # noqa: E402
+from jarvis.hermes import history               # noqa: E402
+import sqlite3                                  # noqa: E402
 
 PORT = int(os.environ.get("JARVIS_PORT", "8730"))
 API_TOKEN = secrets.token_urlsafe(32)
@@ -267,6 +269,23 @@ class Handler(BaseHTTPRequestHandler):
                         session=SESSION["id"], tool_count=runtime.cached_tool_count(),
                         busy=RUN_LOCK.locked())
             return self._json(snap)
+        if p == "/api/sessions" or p.startswith("/api/sessions/"):
+            # read-only chat history from Hermes's own session store
+            if not self._token_ok():
+                return self._json({"error": "unauthorized"}, 401)
+            from urllib.parse import parse_qs, unquote
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                if p == "/api/sessions":
+                    scope = (q.get("scope") or ["dashboard"])[0]
+                    limit = max(1, min(200, int((q.get("limit") or ["40"])[0])))
+                    return self._json({"sessions": history.list_sessions(limit, scope, SESSION["id"]),
+                                       "current": SESSION["id"]})
+                sid = unquote(p[len("/api/sessions/"):])
+                data = history.messages(sid)
+                return self._json(data) if data else self._json({"error": "no such session"}, 404)
+            except (OSError, ValueError, sqlite3.Error) as e:
+                return self._json({"error": str(e)[:200]}, 503)
         if p == "/api/state":
             if not self._token_ok():
                 return self._json({"error": "unauthorized"}, 401)
