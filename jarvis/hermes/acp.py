@@ -89,6 +89,7 @@ class AcpClient:
         self.model = None                     # {"model", "provider"} from the last API call log line
         self.busy = {}                        # session -> when we abandoned a turn Hermes is still finishing
         self.stale = set()                    # sessions where Hermes queued our prompt instead of answering
+        self.commands = []                    # Hermes's own slash commands, as it announces them
         self._ids = itertools.count(1)
         self._pending = {}                    # request id -> callback(msg)
         self._plock = threading.Lock()
@@ -229,6 +230,12 @@ class AcpClient:
         turn = self.turn
         params = msg.get("params") or {}
         if method == "session/update":
+            upd = params.get("update") or {}
+            if upd.get("sessionUpdate") == "available_commands_update":
+                cmds = upd.get("availableCommands") or upd.get("available_commands") or []
+                self.commands = [{"name": str(c.get("name") or "").lstrip("/"), "description": c.get("description") or "",
+                                  "hint": (c.get("input") or {}).get("hint") or ""} for c in cmds if c.get("name")]
+                return
             if turn and params.get("sessionId", turn["session"]) == turn["session"]:
                 turn["q"].put(("update", params.get("update") or {}))
             return
@@ -580,6 +587,10 @@ def has_session(sid):
 
 def steer(text):
     return _CLIENT.steer(text) if (_CLIENT and _CLIENT.turn) else (False, "no task running")
+
+
+def hermes_commands():
+    return list(_CLIENT.commands) if _CLIENT else []
 
 
 def model_info():

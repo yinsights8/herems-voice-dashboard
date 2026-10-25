@@ -286,6 +286,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(data) if data else self._json({"error": "no such session"}, 404)
             except (OSError, ValueError, sqlite3.Error) as e:
                 return self._json({"error": str(e)[:200]}, 503)
+        if p == "/api/commands":
+            if not self._token_ok():
+                return self._json({"error": "unauthorized"}, 401)
+            own = [{"name": n, "hint": h, "description": d, "source": "dashboard"} for n, h, d in commands.COMMANDS]
+            names = {c["name"] for c in own} | {"commands", "missions"}
+            extra = [{**c, "source": "hermes"} for c in acp.hermes_commands() if c["name"] not in names]
+            return self._json({"commands": own + sorted(extra, key=lambda c: c["name"])})
         if p == "/api/state":
             if not self._token_ok():
                 return self._json({"error": "unauthorized"}, 401)
@@ -517,7 +524,7 @@ class Handler(BaseHTTPRequestHandler):
                 # run after it with --resume <half-born session>.
                 if ev.get("t") == "complete" and runtime.valid_session(sid):
                     SESSION["id"] = sid
-                    SESSION["persona_hash"] = phash
+                    SESSION["persona_hash"] = None if (system and message.startswith("/")) else phash
                 if ev.get("t") == "error":
                     SESSION["id"] = None       # drop a bad/stale session so the next run is fresh
                 emit(ev)

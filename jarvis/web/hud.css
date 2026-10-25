@@ -169,6 +169,21 @@ details.tool pre{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:6px;padd
 .viewbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font:11px var(--mono);color:var(--dim);padding-bottom:6px;border-bottom:1px solid var(--line)}
 .viewbar b{color:var(--ink);font:500 13px var(--disp)}
 
+/* slash-command suggestions above the input */
+.uplink{position:relative}
+.cmdpop{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:20;max-height:320px;overflow:auto;
+  background:var(--bg2);border:1px solid rgba(var(--acc),.45);border-radius:12px;padding:5px;
+  box-shadow:0 12px 40px rgba(0,0,0,.5),0 0 24px rgba(var(--acc),.12);scrollbar-width:thin}
+.cmdpop .it{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:10px;align-items:baseline;padding:7px 10px;border-radius:8px;cursor:pointer}
+.cmdpop .it b{font:500 13px var(--mono);color:var(--A)}
+.cmdpop .it i{font:normal 11.5px var(--mono);color:var(--A2);white-space:nowrap}
+.cmdpop .it span{font-size:12.5px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmdpop .it em{font:normal 9.5px var(--mono);color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+.cmdpop .it.sel,.cmdpop .it:hover{background:rgba(var(--acc),.12)}
+.cmdpop .foot{font:10px var(--mono);color:var(--dim);padding:6px 10px 3px;border-top:1px solid var(--line);margin-top:4px}
+.cmdpop .hintrow{padding:7px 10px;font:12px var(--mono);color:var(--mut)}
+.cmdpop .hintrow b{color:var(--A)}.cmdpop .hintrow i{color:var(--A2);font-style:normal}
+
 /* approval card app.js appends */
 #permCard .ctl{cursor:pointer;border-radius:8px;border:1px solid rgba(var(--acc),.4);background:transparent;color:var(--ink);font:11px var(--mono);padding:7px 12px}
 #permCard .ctl.run{background:var(--A);color:#fff;border-color:var(--A)}

@@ -151,6 +151,26 @@ def _shell(cmd, timeout=25):
         return f"Unavailable: {e}"
 
 
+# name, what to type after it, what it does — shown as you type "/" on the HUD
+COMMANDS = [
+    ("new", "[first message]", "Start a fresh Hermes conversation"),
+    ("goal", "<text | status | clear>", "Set, read or clear the standing objective"),
+    ("mission", "[task]", "Read the mission queue, or add a task to it"),
+    ("kanban", "[task]", "Same as /mission"),
+    ("background", "<mission>", "Run a Hermes task in the background; reported when done"),
+    ("browser", "<task>", "Ask Hermes to use its browser tools"),
+    ("profile", "[fact]", "Read or add notes about you that go to Robin"),
+    ("personality", "[tone]", "Read or set Robin's tone of voice"),
+    ("tools", "", "List Hermes's tools and whether they're on"),
+    ("toolsets", "", "Ask Hermes which toolsets and connected apps it has"),
+    ("connectors", "", "How apps connected in Hermes reach the dashboard"),
+    ("connect", "<app>", "How to connect a third-party app in Hermes"),
+    ("status", "", "Runtime, profile and voice status"),
+    ("clear", "", "Clear the response panel"),
+    ("help", "", "List all commands"),
+]
+
+
 def _commands_reply():
     return """Available dashboard slash commands:
 /new — reset the Hermes thread

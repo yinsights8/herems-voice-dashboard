@@ -160,6 +160,7 @@ async function transmit(message, options = {}){
     // A task is running. Plain words go into it as guidance (Hermes /steer);
     // if that can't happen they're sent the moment the task ends. Never dropped.
     if (!message.trim().startsWith('/')) return steerRun(message.trim());
+    if (/^\/steer\s+\S/.test(message.trim())) return steerRun(message.trim().replace(/^\/steer\s+/, ''));
     log('note','BUSY',`still working — "${message.slice(0,40)}" not sent. Wait, or press Esc to cancel.`);
     return;
   }

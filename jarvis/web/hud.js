@@ -252,7 +252,7 @@ function refreshChat(opts = {}){
   const other = chatView === 'sessions';
   root.classList.toggle('view-other', other);
   if (other) return viewing ? showSession(viewing, {past: true, first: opts.first}) : showSessionList();
-  if (!curSession){ chatLog.innerHTML = `<div class="empty">No conversation yet. It appears here after ${esc(NAME)}'s first answer.</div>`; return; }
+  if (!curSession){ chatLog.innerHTML = '<div class="empty">No conversation yet. It appears here after the first answer.</div>'; return; }
   showSession(curSession, {first: opts.first});
 }
 // refresh the open conversation after each answer (Hermes saves it as the turn ends)
@@ -266,6 +266,72 @@ new MutationObserver(muts => {
   }
 }).observe(q('#log'), {childList: true});
 try { if (localStorage.getItem('hud.chat') === '1') setTimeout(() => setExpanded(true), 400); } catch (_) {}
+
+/* ══════════ slash-command suggestions ══════════
+   Type "/" in the input: matching commands (the dashboard's and Hermes's own)
+   appear above it. ↑↓ choose, Tab or Enter pick, Esc closes. Once a command is
+   picked, the popup shows what to type after it. */
+const input = q('#input'), pop = q('#cmdPop');
+let CMDS = [], matches = [], sel = 0;
+async function loadCommands(){
+  try { CMDS = (await getJSON('/api/commands')).commands || []; } catch (_) {}
+}
+loadCommands(); setInterval(loadCommands, 60000);   // Hermes announces its commands once a session opens
+
+function closePop(){ pop.classList.add('hidden'); matches = []; }
+function rank(c, word){
+  const n = c.name.toLowerCase();
+  return n.startsWith(word) ? 0 : n.includes(word) ? 1 : (c.description || '').toLowerCase().includes(word) ? 2 : 9;
+}
+function updatePop(){
+  const v = input.value;
+  if (!v.startsWith('/') || v.includes('\n')){ closePop(); return; }
+  const m = v.match(/^\/(\S*)(\s+)?/);
+  const word = (m[1] || '').toLowerCase();
+  if (m[2]){                                  // a command is typed: show what goes after it
+    const c = CMDS.find(x => x.name.toLowerCase() === word);
+    if (!c || !c.hint || v.trim().length > word.length + 1){ closePop(); return; }
+    matches = [];
+    pop.innerHTML = `<div class="hintrow"><b>/${esc(c.name)}</b> <i>${esc(c.hint)}</i> — ${esc(c.description)}</div>`;
+    pop.classList.remove('hidden');
+    return;
+  }
+  matches = CMDS.map(c => [rank(c, word), c]).filter(([r]) => r < 9).sort((a, b) => a[0] - b[0] || a[1].name.localeCompare(b[1].name)).map(x => x[1]);
+  if (!matches.length){ closePop(); return; }
+  sel = Math.min(sel, matches.length - 1);
+  pop.innerHTML = matches.map((c, i) =>
+    `<div class="it${i === sel ? ' sel' : ''}" role="option" data-i="${i}"><b>/${esc(c.name)}</b><i>${esc(c.hint || '')}</i>`
+    + `<span>${esc(c.description || '')}</span><em>${c.source === 'hermes' ? 'Hermes' : ''}</em></div>`).join('')
+    + `<div class="foot">↑↓ choose · Tab or Enter pick · Esc close</div>`;
+  pop.classList.remove('hidden');
+  const s = pop.querySelector('.it.sel'); s && s.scrollIntoView({block: 'nearest'});
+}
+function pick(i, send){
+  const c = matches[i]; if (!c) return;
+  input.value = '/' + c.name + (c.hint ? ' ' : '');
+  input.focus();
+  closePop();
+  if (send && !c.hint) q('#run').click();     // a command with nothing to add runs straight away
+  else updatePop();                            // otherwise show what to type next
+}
+input.addEventListener('input', () => { sel = 0; updatePop(); });
+input.addEventListener('blur', () => setTimeout(closePop, 150));
+pop.addEventListener('mousedown', e => {      // mousedown, so the input keeps focus
+  const it = e.target.closest('.it'); if (!it) return;
+  e.preventDefault(); pick(+it.dataset.i, false);
+});
+// capture on the container so these keys are handled before app.js sends or Esc cancels
+q('.uplink').addEventListener('keydown', e => {
+  if (e.target !== input || pop.classList.contains('hidden')) return;
+  if (e.key === 'Escape'){ closePop(); e.preventDefault(); e.stopPropagation(); return; }
+  if (!matches.length) return;                 // hint row only: keys behave normally
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+    sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
+    updatePop(); e.preventDefault(); e.stopPropagation();
+  } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)){
+    pick(sel, e.key === 'Enter'); e.preventDefault(); e.stopPropagation();
+  }
+}, true);
 
 /* ══════════ neural core ══════════
    A glowing knot at the centre, filaments flowing out across a dark plane,

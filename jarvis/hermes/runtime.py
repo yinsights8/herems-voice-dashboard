@@ -205,6 +205,8 @@ def refresh_caches():
 
 
 def compose_prompt(message, system=None):
+    if message.lstrip().startswith("/"):
+        return message                      # Hermes only recognises a command at the very start
     # Hermes has no separate system-prompt input here. Put the voice persona and
     # the current request into one explicit turn so the model answers as JARVIS
     # instead of narrating its runtime.
