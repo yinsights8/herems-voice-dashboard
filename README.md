@@ -168,7 +168,7 @@ install.sh                  first-run setup and launch
 | --- | --- |
 | Ctrl+Space | Start or stop the voice conversation |
 | Esc | Stop the current answer, or end the conversation |
-| Ctrl+Enter | Send what's typed |
+| Enter | Send what's typed (Shift+Enter for a new line) |
 
 ## Security
 

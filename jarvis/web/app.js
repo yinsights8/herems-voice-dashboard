@@ -1071,7 +1071,8 @@ $('#mute').onclick = () => {
   }
 };
 $('#input').addEventListener('keydown', e => {
-  if (e.key==='Enter' && (e.metaKey||e.ctrlKey)){ e.preventDefault(); sendFromInput(); }
+  // Enter sends; Shift+Enter adds a new line. Ignored mid-composition (IME input).
+  if (e.key==='Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); sendFromInput(); }
 });
 
 // ══════════ system panel ══════════
