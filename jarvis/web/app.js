@@ -8,7 +8,7 @@ const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecogni
 const speechSynth = window.speechSynthesis;
 const API_TOKEN = document.querySelector('meta[name="jarvis-token"]')?.content || '';
 let NAME = 'Jarvis';                        // replaced by assistant.yaml's name at boot
-let UI = {barge_in: true, earcon: true, max_spoken_chars: 700, browser_language: ''};
+let UI = {barge_in: true, earcon: true, max_spoken_chars: 700, browser_language: '', hold_unfinished_ms: 1500};
 const apiHeaders = extra => ({'x-jarvis-token': API_TOKEN, ...(extra || {})});
 
 // ── reactor ticks ──
@@ -163,7 +163,7 @@ async function transmit(message, options = {}){
     log('note','BUSY',`still working — "${message.slice(0,40)}" not sent. Wait, or press Esc to cancel.`);
     return;
   }
-  running = true; answer = ''; firstDelta = false; speakThisRun = options.speak !== false;
+  running = true; answer = ''; firstDelta = false; speakThisRun = options.speak !== false; steerAcked = false;
   const turn = curTurn = options.turn || newTurn('text');
   mark(turn, 'sent');
 
@@ -233,13 +233,19 @@ async function transmit(message, options = {}){
 }
 
 // ── talking to a task while it runs ──
-let nextUp = null, listenTimer = null;
+let nextUp = null, listenTimer = null, steerAcked = false;
 async function steerRun(text){
   try {
     const r = await fetch('/api/steer', {method:'POST', headers:apiHeaders({'content-type':'application/json'}),
                                          body: JSON.stringify({text})});
     if (r.ok){
       log('send','STEER',`passed to the running task: "${text.slice(0, 90)}"`);
+      // Hermes applies it at the task's next step, which can be a while if a tool is
+      // mid-way: say once that it was heard, so the silence doesn't feel like being ignored.
+      if (convo && !steerAcked){
+        steerAcked = true;
+        speak("Got it, I'll factor that in when the current step finishes. Say stop to start over.");
+      } else earcon();
       return;
     }
   } catch(_){}
@@ -656,9 +662,30 @@ function earcon(){
   o.start(t); o.stop(t + 0.15);
 }
 
+// ── a sentence that paused mid-way, waiting for its continuation ──
+let held = null;
+function armedText(said){
+  const armed = $('#input').dataset.cmd || '';
+  return (armed ? armed + ' ' : '') + said;
+}
+function sendVoice(said, turn){
+  $('#input').value = '';
+  log('send','SEND',`auto-sent voice: ${armedText(said)}`);
+}
+function sendHeld(){
+  if (!held) return;
+  // you started talking again, or that speech is being transcribed: wait for it
+  if (inSpeech || (phase === 'busy' && !running)){ held.timer = setTimeout(sendHeld, 300); return; }
+  const {text, turn} = held; held = null;
+  sendVoice(text, turn);
+  const full = armedText(text); disarm();
+  phase = 'busy';
+  transmit(full, {turn}).then(resumeListening);
+}
+
 async function finishTurn(reason){
   const frames = turnBuf, voiced = voicedMs;
-  const turn = newTurn('voice');
+  let turn = newTurn('voice');
   turn.t.speechStart = turnStart; turn.t.lastVoice = loudAt; mark(turn, 'endpoint');
   turn.noise = noiseFloor; turn.peak = turnPeak; turn.rejected = rejectedNoises;
   turnBuf = []; inSpeech = false; onsetMs = 0;
@@ -719,7 +746,7 @@ async function finishTurn(reason){
       }
       log('voice','VOICE','approval pending — say "yes" or "no"');
       return startListening();
-    } else if (running && /^(stop|cancel|abort|never ?mind|stop (it|that))[.!]?$/i.test(text.trim())){
+    } else if (running && new RegExp(`^(hey )?(${NAME}|jarvis)?[,.!\\s]*(stop|cancel|abort|never ?mind|stop (it|that))[.!]?$`, 'i').test(text.trim())){
       emptyStreak = 0;
       log('voice','VOICE',`heard "${text}" — stopping the task`);
       turn.note = 'stop command'; reportTurn(turn);
@@ -728,11 +755,20 @@ async function finishTurn(reason){
       emptyStreak = 0;
       unflagSelect('#voiceSel');
       log('voice','VOICE',`transcribed by ${ENGINE_LABELS[sttUsed]} in ${ms}ms: "${text}"`);
-      const armed = $('#input').dataset.cmd || '';
-      const full = (armed ? armed + ' ' : '') + text;
-      $('#input').value = ''; disarm();
-      log('send','SEND',`auto-sent voice: ${full}`);
-      await transmit(full, {turn});             // runs, then speaks (interruptible)
+      let said = text;
+      if (held){                                // the rest of a sentence that paused mid-way
+        said = held.text + ' ' + text; clearTimeout(held.timer); held = null;
+      }
+      // Speech-to-text ends a finished sentence with . ? or !; without one you probably
+      // paused mid-thought. Wait a moment for the rest instead of acting on half a request.
+      if (!running && UI.hold_unfinished_ms > 0 && !/[.?!…]["'”’)\]]*$/.test(said) && said.split(/\s+/).length < 40){
+        held = {text: said, turn, timer: setTimeout(sendHeld, UI.hold_unfinished_ms)};
+        log('voice','VOICE','sounds unfinished — listening for the rest');
+        return startListening();
+      }
+      const full = armedText(said);
+      sendVoice(said, turn); disarm();
+      await transmit(full, {turn});  // runs, then speaks (interruptible)
     }
   } catch(e){
     log('error','VOICE','transcription failed');
@@ -802,7 +838,7 @@ function speak(text, turn = null){
       if (turn){ mark(turn, 'spoken'); turn.interrupted = interrupted; }
       if (stopSpeech === stop) stopSpeech = null;
       document.body.classList.remove('speaking');
-      if (!interrupted && phase === 'speaking') startListening();
+      if (!interrupted && phase === 'speaking') (running ? listenDuringRun() : startListening());
       resolve();
     };
     const stop = () => {

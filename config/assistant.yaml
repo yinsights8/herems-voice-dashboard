@@ -86,6 +86,7 @@ voice:
     max_turn_ms: 20000        # hard cap on one turn
     preroll_ms: 400           # audio kept from just before you started speaking
     barge_in_ms: 280          # how long you must speak over it to interrupt
+    hold_unfinished_ms: 1500  # a sentence with no . ? or ! waits this long for the rest (0 = off)
 
 logging:
   timings: true               # per-turn timings in logs/timings.jsonl (no words stored)

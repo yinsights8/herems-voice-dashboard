@@ -192,4 +192,5 @@ def ui_settings():
         "earcon": _get("voice.earcon", True) is not False,
         "max_spoken_chars": _get("voice.max_spoken_chars", 700),
         "browser_language": _get("voice.browser_language", ""),
+        "hold_unfinished_ms": _get("voice.listening.hold_unfinished_ms", 1500),
     }
