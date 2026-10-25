@@ -6,7 +6,10 @@ A local, voice-enabled JARVIS dashboard for [Hermes Agent](https://github.com/No
 
 ## What you get
 
-- Futuristic browser-based mission-control HUD
+- Tactical HUD with a 3D core that reacts to your voice and to what Robin is doing (Three.js, bundled, works offline)
+- Seven colour themes (tactical red, arc reactor, violet, amber, aurora, night ops, daylight), remembered per browser
+- Live panels: mission queue, activity stream, CPU/RAM/GPU, latency trend, context size, command grid
+- The original HUD is still available at `/classic.html`
 - Natural conversational replies with a concise JARVIS voice persona
 - Continuous voice conversation: listen → transcribe → answer → speak → listen
 - Optional ElevenLabs speech-to-text and text-to-speech
@@ -136,8 +139,14 @@ jarvis/                     the Python package (run with `python -m jarvis`)
     stt.py                  speech-to-text: ElevenLabs Scribe or Whisper
     tts.py                  text-to-speech: ElevenLabs or Kokoro
     elevenlabs.py           ElevenLabs API calls (key stays server-side)
-  web/                      dependency-free HUD (index.html, app.js, styles.css)
-                            and the latency monitor (metrics.html)
+  system.py                 CPU / RAM / GPU readings for the diagnostics panel
+  web/
+    index.html, hud.css, hud.js   tactical HUD: 3D core, panels, themes
+    app.js                  voice engine shared by both HUDs (listening, runs,
+                            approvals, timings)
+    classic.html, styles.css  the original HUD
+    metrics.html            latency monitor
+    vendor/three.min.js     Three.js r128 (MIT), bundled so it works offline
 config/
   assistant.yaml            all tunable settings
   persona.md                how the assistant speaks
@@ -152,6 +161,14 @@ models/                     Kokoro ONNX model files (onnx mode only)
 start.sh / start.bat        launchers (macOS/Linux, Windows)
 install.sh                  first-run setup and launch
 ```
+
+## Keyboard
+
+| Key | Action |
+| --- | --- |
+| Ctrl+Space | Start or stop the voice conversation |
+| Esc | Stop the current answer, or end the conversation |
+| Ctrl+Enter | Send what's typed |
 
 ## Security
 

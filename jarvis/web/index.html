@@ -1,156 +1,161 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="red">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="jarvis-token" content="__JARVIS_TOKEN__">
-<title>JARVIS · Hermes Mission Control</title>
+<title>JARVIS · Tactical HUD</title>
+<script>try{var t=localStorage.getItem('hud.theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css">
-<style>
-/* latency strip under the response panel */
-.latstrip{padding:0 18px 12px;font-family:var(--mono);font-size:10.5px;color:var(--mut)}
-.latstrip .lsbar{display:flex;height:6px;border-radius:4px;overflow:hidden;background:var(--faint);margin-bottom:6px}
-.latstrip .lsbar i{display:block;min-width:2px}
-.latstrip b{color:var(--ink);font-weight:500}
-.latstrip a{color:var(--cyan);text-decoration:none}
-/* voice dropdown in the mission bar */
-#voiceSel{cursor:pointer;color:var(--cyan);-webkit-appearance:none;appearance:none;padding-right:10px;max-width:190px}
-#voiceSel option{background:#061722;color:#e8fbff}
-/* leftover "01 TOP CHANNELS" label covered the reactor status */
-.reactor:before{display:none}
-</style>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="hud.css">
 </head>
 <body>
-<div class="scan"></div>
-<div class="grid-bg"></div>
-<div class="ambient a1"></div><div class="ambient a2"></div>
+<div class="bgfx"></div><div class="sweep"></div>
 
-<header class="topbar">
-  <div class="sigil"><span></span></div>
-  <div class="brandlock">
-    <div class="overline">Hermes Agent Direct Channel</div>
-    <div class="mega">JARVIS</div>
-  </div>
-  <div class="pills">
-    <div class="pill ok"><i></i><span id="top-gw">Gateway: probing</span></div>
-    <div class="pill"><i></i><span id="top-profile">Profile: default</span></div>
-    <div class="pill warn"><i></i><span id="top-voice">Voice: browser</span></div>
-  </div>
-</header>
+<main>
+  <!-- ── left: brand, tasks, activity ── -->
+  <section class="col side left">
+    <div class="brand"><div class="bar"></div><div><h1>JARVIS</h1><small id="brandSub">Hermes agent interface</small></div></div>
 
-<div class="hud">
-  <section class="col left glass">
-    <header class="colhead">
-      <div class="h">Command<br>Matrix</div>
-      <div class="sub">Click to execute · payload commands stay armed</div>
-    </header>
-
-    <div class="cmds" id="cmds">
-      <button class="cmd" data-cmd="/new"><b>/new</b><span>Fresh thread</span></button>
-      <button class="cmd" data-cmd="/goal"><b>/goal</b><span>Standing objective</span></button>
-      <button class="cmd" data-cmd="/tools"><b>/tools</b><span>Hermes tool status</span></button>
-      <button class="cmd" data-cmd="/browser"><b>/browser</b><span>Chrome / browser op</span></button>
-      <button class="cmd" data-cmd="/background"><b>/background</b><span>Async mission</span></button>
-      <button class="cmd" data-cmd="/mission"><b>/mission</b><span>Mission queue</span></button>
-      <button class="cmd" data-cmd="/personality"><b>/personality</b><span>Voice/tone overlay</span></button>
-      <button class="cmd" data-cmd="/commands"><b>/commands</b><span>Show commands</span></button>
+    <div class="panel">
+      <header>
+        <svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>
+        <h2>Task intel</h2><span class="badge" id="taskCount">0 active</span>
+      </header>
+      <form class="taskadd" id="taskForm"><input id="taskInput" placeholder="New task…" autocomplete="off" maxlength="300"><button class="btn" type="submit">Add</button></form>
+      <div class="goal hidden" id="goalLine"></div>
+      <ul class="tasks" id="taskList"><li class="empty" style="border:0;background:none;cursor:default">Loading mission queue…</li></ul>
+      <div class="tasksfoot"><button class="link" id="clearDone" type="button">clear done</button></div>
     </div>
 
-    <div class="toolrack">
-      <div class="lbl">Connected Hermes Tools</div>
-      <div id="toolsList" class="chips"><span class="chip ghost">loading tool matrix…</span></div>
+    <div class="panel activity">
+      <header><span class="dot"></span><h2>Neural activity</h2><span class="live">[LIVE]</span></header>
+      <div id="log"></div>
+    </div>
+  </section>
+
+  <!-- ── centre: status bar, 3D core, response, input ── -->
+  <section class="col center">
+    <div class="ctxbar">
+      <span class="lbl">Status</span><span id="stword">STANDBY</span>
+      <span class="doing" id="doing">awaiting uplink</span>
+      <span id="strun"></span>
+      <button id="mic" title="Start or stop the voice conversation (Ctrl+Space)">◉ Voice</button>
+    </div>
+
+    <div class="stage" id="stage">
+      <canvas id="core3d" aria-label="Robin core visualiser"></canvas>
+      <div class="readout l" id="roL"><b>—</b>CPU<br>—<br>RAM</div>
+      <div class="readout r" id="roR"><b>—</b>MODE<br>—<br>TOOLS</div>
+      <div class="name"><b>JARVIS</b><i id="coreSub">CORE ONLINE</i></div>
+    </div>
+
+    <div class="latstrip" id="latStrip">latency · no turns yet · <a href="/metrics.html" target="_blank">metrics ↗</a></div>
+
+    <div class="panel" id="responseWrap">
+      <div class="rhead"><span>JARVIS response</span><button class="iconbtn" id="clearBtn" type="button">clear</button><span class="rtag" id="rtag">IDLE</span></div>
+      <div class="rbody" id="response"><span class="rplaceholder">Standing by. Speak, or type below.</span></div>
     </div>
 
     <div class="uplink">
-      <div class="lbl">Pending uplink</div>
-      <div class="field">
-        <textarea id="input" rows="4" spellcheck="false" placeholder="Speak through browser voice or type a Hermes instruction. Slash commands are supported."></textarea>
-      </div>
-      <div class="tip" id="tip">Use <b>Browser Voice</b> for local speech recognition, or server ElevenLabs if configured. Try <b>/browser</b> “open Chrome and inspect the current tab”.</div>
+      <textarea id="input" rows="1" spellcheck="false" placeholder="Type an instruction or /command — Ctrl+Enter to send"></textarea>
+      <select id="voiceSel" title="Voice: listening and speaking engines"><option>ElevenLabs</option></select>
+      <button id="mute" class="iconbtn on" title="Mute speech">🔊</button>
+      <button id="run" class="btn" title="Send (Ctrl+Enter)">Send</button>
     </div>
+    <div id="tip">Ctrl+Space to talk · Esc to stop · Ctrl+Enter to send</div>
   </section>
 
-  <section class="col center">
-    <div class="reactor" id="reactor">
-      <svg viewBox="0 0 520 520" id="core" aria-label="JARVIS reactor visualizer">
-        <defs>
-          <radialGradient id="orb" cx="50%" cy="45%" r="55%">
-            <stop offset="0%" stop-color="#ffffff"/><stop offset="25%" stop-color="#7ff7ff"/>
-            <stop offset="58%" stop-color="#16bfd8"/><stop offset="100%" stop-color="#02111b"/>
-          </radialGradient>
-          <filter id="soft" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-        </defs>
-        <circle class="ring rr1" cx="260" cy="260" r="242"/>
-        <circle class="ring rr2" cx="260" cy="260" r="210"/>
-        <circle class="ring rr3" cx="260" cy="260" r="174"/>
-        <circle class="ring rr4" cx="260" cy="260" r="132"/>
-        <circle class="arcA" cx="260" cy="260" r="226" filter="url(#soft)"/>
-        <circle class="arcB" cx="260" cy="260" r="188" filter="url(#soft)"/>
-        <circle class="arcC" cx="260" cy="260" r="151" filter="url(#soft)"/>
-        <g id="ticks480"></g>
-        <path class="comet" d="M80 318 Q 195 392 278 310" />
-        <circle class="orb" cx="260" cy="260" r="64" fill="url(#orb)" filter="url(#soft)"/>
-        <circle class="orbrim" cx="260" cy="260" r="64"/>
-      </svg>
-      <div class="status">
-        <div class="stbrand">JARVIS CORE</div>
-        <div class="stword" id="stword">STANDBY</div>
-        <div class="strun" id="strun">awaiting uplink</div>
+  <!-- ── right: diagnostics, agent, context, commands ── -->
+  <section class="col side right">
+    <div class="panel">
+      <header>
+        <svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+        <h2>System diagnostics</h2>
+      </header>
+      <div class="meter"><div class="row"><span>CPU load</span><span id="cpuV">—</span></div><div class="track"><i id="cpuB"></i></div></div>
+      <div class="meter"><div class="row"><span>RAM usage</span><span id="ramV">—</span></div><div class="track"><i id="ramB"></i></div></div>
+      <div class="meter"><div class="row"><span>GPU VRAM</span><span id="vramV">—</span></div><div class="track"><i id="vramB"></i></div></div>
+      <div class="meter"><div class="row"><span>GPU load</span><span id="gpuV">—</span></div><div class="track"><i id="gpuB"></i></div></div>
+      <div class="minis"><div>Server uptime<b id="upV">—</b></div><div>Model<b id="modelV" title="">—</b></div></div>
+    </div>
+
+    <div class="panel">
+      <header>
+        <svg viewBox="0 0 24 24"><path d="M5 7l5 5-5 5M12 19h7"/></svg>
+        <h2>Agent status</h2><span class="badge" id="busyBadge">idle</span>
+      </header>
+      <div class="kv">
+        <span>Brain</span><b id="sy-brain">—</b>
+        <span>Runtime</span><b id="sy-runtime">—</b>
+        <span>Profile</span><b id="sy-profile">default</b>
+        <span>Voice</span><b id="sy-voice">—</b>
+        <span>Gateway</span><b id="sy-gw">—</b>
+        <span>Clock</span><b id="sy-clock">—</b>
+      </div>
+      <svg id="spark" viewBox="0 0 300 44" preserveAspectRatio="none"></svg>
+      <div class="minis"><div>Median reply<b id="medV">—</b></div><div>Turns OK<b id="okV">—</b></div></div>
+    </div>
+
+    <div class="panel">
+      <header>
+        <svg viewBox="0 0 24 24"><path d="M12 3a4 4 0 0 0-4 4v1a4 4 0 0 0-2 7 4 4 0 0 0 6 4 4 4 0 0 0 6-4 4 4 0 0 0-2-7V7a4 4 0 0 0-4-4zM12 3v16"/></svg>
+        <h2>Context core</h2>
+      </header>
+      <div class="meter"><div class="row"><span>Context sent</span><span id="ctxV">—</span></div><div class="track"><i id="ctxB" class="hot"></i></div></div>
+      <div class="kv">
+        <span>Reply</span><b id="outV">—</b>
+        <span>Model calls</span><b id="callsV">—</b>
+        <span>Session</span><b id="sessV">—</b>
+      </div>
+      <div class="quote" id="goalQuote">No standing objective. Say “/goal …” to set one.</div>
+    </div>
+
+    <div class="panel">
+      <header>
+        <svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>
+        <h2>Command grid</h2>
+      </header>
+      <div class="cmds" id="cmds">
+        <button class="cmd" data-cmd="/new"><b>/new</b>Fresh</button>
+        <button class="cmd" data-cmd="/goal"><b>/goal</b>Objective</button>
+        <button class="cmd" data-cmd="/mission"><b>/mission</b>Queue</button>
+        <button class="cmd" data-cmd="/browser"><b>/browser</b>Chrome</button>
+        <button class="cmd" data-cmd="/background"><b>/bg</b>Async</button>
+        <button class="cmd" data-cmd="/tools"><b>/tools</b>Status</button>
+        <button class="cmd" data-cmd="/personality"><b>/tone</b>Persona</button>
+        <button class="cmd" data-cmd="/toolsets"><b>/sets</b>Toolsets</button>
+        <button class="cmd" data-cmd="/commands"><b>/help</b>Commands</button>
       </div>
     </div>
-
-    <div class="response glass" id="responseWrap">
-      <div class="rhead"><span>JARVIS Response</span><span class="rtag" id="rtag">IDLE</span></div>
-      <div class="rbody" id="response"><span class="rplaceholder">Standing by. Transmit an instruction.</span></div>
-      <div class="latstrip" id="latStrip">latency · no turns yet · <a href="/metrics.html" target="_blank">metrics ↗</a></div>
-    </div>
-
-    <div class="missionbar glass">
-      <button id="mic" class="ctl mic" title="Browser voice / microphone">◉ Browser Voice</button>
-      <button id="run" class="ctl run" title="Send (⌘↵)">Transmit to JARVIS ▸</button>
-      <button id="showCommands" class="ctl aux">Show Commands</button>
-      <button id="missionBtn" class="ctl aux">Mission Control</button>
-      <select id="voiceSel" class="ctl aux" title="Voice: listening and speaking engines"><option>🎙 ElevenLabs</option></select>
-      <button id="mute" class="ctl mute on" title="Mute Jarvis speech">🔊</button>
-      <button id="clearBtn" class="ctl aux">Clear</button>
-      <a id="metricsBtn" class="ctl aux" href="/metrics.html" target="_blank" style="text-decoration:none;display:grid;place-items:center">Metrics ↗</a>
-    </div>
   </section>
+</main>
 
-  <section class="col right glass">
-    <header class="colhead row">
-      <div class="h sm">Action Log</div>
-      <div class="live" id="live">LIVE TELEMETRY</div>
-    </header>
+<footer class="statusbar">
+  <span id="sessionClock">SESSION 00:00:00</span>
+  <span class="hint" id="hint">JARVIS standby — Ctrl+Space to talk</span>
+  <span class="chip" id="latChip" title="Last turn: you stopped → reply starts">— ms</span>
+  <span class="chip" id="modelChip">model —</span>
+  <select id="themeSel" title="Colour theme">
+    <option value="red">Tactical red</option><option value="arc">Arc reactor</option><option value="violet">Midnight violet</option>
+    <option value="amber">Graphite amber</option><option value="aurora">Aurora</option><option value="nightops">Night ops</option><option value="daylight">Daylight</option>
+  </select>
+  <a href="/metrics.html" target="_blank">metrics ↗</a>
+  <a href="/classic.html">classic</a>
+</footer>
 
-    <div class="sysgrid">
-      <div class="sysrow"><span>Gateway</span><b id="sy-gw" class="ok">online</b></div>
-      <div class="sysrow"><span>Brain</span><b id="sy-brain">—</b></div>
-      <div class="sysrow"><span>Voice</span><b id="sy-voice">—</b></div>
-      <div class="sysrow"><span>Profile</span><b id="sy-profile">default</b></div>
-      <div class="sysrow"><span>Runtime</span><b id="sy-runtime">—</b></div>
-      <div class="sysrow"><span>Uplink</span><b id="sy-clock">—</b></div>
-    </div>
-
-    <div class="missionPanel">
-      <div class="log-lbl">Mission controls</div>
-      <div class="miniBtns">
-        <button data-quick="/status">Status</button>
-        <button data-quick="/tools">Tools</button>
-        <button data-quick="/toolsets">Toolsets</button>
-        <button data-quick="/connectors">Connectors</button>
-      </div>
-    </div>
-
-    <div class="log-lbl">Event stream</div>
-    <div class="log" id="log"></div>
-  </section>
+<!-- elements the shared voice engine (app.js) expects; not shown in this layout -->
+<div class="hidden">
+  <svg><g id="ticks480"></g></svg>
+  <span id="top-gw"></span><span id="top-profile"></span><span id="top-voice"></span>
+  <div id="toolsList"></div>
+  <button id="showCommands"></button><button id="missionBtn"></button>
 </div>
 
-<div class="brandmark">HERMES · JARVIS OS</div>
+<script src="vendor/three.min.js"></script>
 <script src="app.js"></script>
+<script src="hud.js"></script>
 </body>
 </html>

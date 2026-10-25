@@ -39,6 +39,7 @@ RETRY_AFTER_FAILURE_S = 120
 # Hermes logs every model call on stderr, e.g.
 #   agent.conversation_loop: API call #1: model=gpt-6-luna provider=opencode-zen in=13378 out=5 total=13383 latency=2.3s
 # Those lines tell us how much of a turn was the model itself, and how many calls it made.
+_MODEL = re.compile(r"\bmodel=(\S+)(?:\s+provider=(\S+))?")
 _API_CALL = re.compile(r"API call #(\d+):.*?\bin=(\d+)\b.*?\bout=(\d+)\b.*?\blatency=([\d.]+)s")
 
 
@@ -80,6 +81,7 @@ class AcpClient:
         self.sessions = set()
         self.turn = None                      # {"session", "q", "perms"} while a prompt runs
         self.stderr = collections.deque(maxlen=200)
+        self.model = None                     # {"model", "provider"} from the last API call log line
         self._ids = itertools.count(1)
         self._pending = {}                    # request id -> callback(msg)
         self._plock = threading.Lock()
@@ -178,6 +180,9 @@ class AcpClient:
                 if m:
                     turn["api"].append({"at": time.monotonic(), "in": int(m.group(2)),
                                         "out": int(m.group(3)), "ms": int(float(m.group(4)) * 1000)})
+            mm = _MODEL.search(line) if "API call" in line else None
+            if mm:
+                self.model = {"model": mm.group(1), "provider": mm.group(2)}
             if line:
                 self.stderr.append(line)
                 if self.raw_log:
@@ -472,6 +477,11 @@ def get_client(cmd, cwd, env, raw_log=None):
 
 def has_session(sid):
     return bool(_CLIENT and _CLIENT.alive() and sid in _CLIENT.sessions)
+
+
+def model_info():
+    """The model and provider Hermes last called, read from its own log."""
+    return (_CLIENT.model if _CLIENT else None) or None
 
 
 def turn_active():

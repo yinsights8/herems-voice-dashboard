@@ -49,6 +49,8 @@ from jarvis import commands                     # noqa: E402
 from jarvis.hermes import runtime               # noqa: E402
 from jarvis.voice import stt, tts                # noqa: E402
 from jarvis.voice import elevenlabs as voice     # noqa: E402
+from jarvis import system                       # noqa: E402
+from jarvis.hermes import acp                   # noqa: E402
 
 PORT = int(os.environ.get("JARVIS_PORT", "8730"))
 API_TOKEN = secrets.token_urlsafe(32)
@@ -256,6 +258,22 @@ class Handler(BaseHTTPRequestHandler):
                 limit = 200
             return self._json({"records": _read_timings(limit), "logging": TIMING_ON,
                                "mode": runtime.mode_label() if runtime.runtime_kind() == "hermes" else None})
+        if p == "/api/system":
+            if not self._token_ok():
+                return self._json({"error": "unauthorized"}, 401)
+            snap = system.snapshot()
+            snap.update(model=acp.model_info() or {"model": runtime.MODEL or None, "provider": None},
+                        hermes_mode=runtime.mode_label() if runtime.runtime_kind() == "hermes" else None,
+                        session=SESSION["id"], tool_count=runtime.cached_tool_count(),
+                        busy=RUN_LOCK.locked())
+            return self._json(snap)
+        if p == "/api/state":
+            if not self._token_ok():
+                return self._json({"error": "unauthorized"}, 401)
+            d = commands.load()
+            return self._json({"tasks": d.get("tasks", []), "goal": d.get("goal", ""),
+                               "personality": d.get("personality", ""),
+                               "missions": (d.get("missions") or [])[-8:]})
         if p == "/api/jobs":
             if not self._token_ok():
                 return self._json({"error": "unauthorized"}, 401)
@@ -283,7 +301,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._token_ok():
             return self._json({"error": "unauthorized"}, 401)
         ctype = self.headers.get("Content-Type", "").split(";", 1)[0].lower()
-        if p in {"/api/run", "/api/speak", "/api/new", "/api/cancel", "/api/timing", "/api/permission"} and ctype != "application/json":
+        if p in {"/api/run", "/api/speak", "/api/new", "/api/cancel", "/api/timing", "/api/permission", "/api/task"} and ctype != "application/json":
             return self._json({"error": "application/json required"}, 415)
         if p == "/api/listen" and not ctype.startswith("audio/"):
             return self._json({"error": "audio content type required"}, 415)
@@ -348,6 +366,32 @@ class Handler(BaseHTTPRequestHandler):
             ok = runtime.answer_permission(str(body.get("id") or ""),
                                            str(option) if option else None)
             return self._json({"ok": ok}, 200 if ok else 409)
+
+        if p == "/api/task":
+            # mission queue edits from the HUD: add, toggle done, remove, clear done
+            try:
+                body = json.loads(raw or b"{}")
+            except json.JSONDecodeError:
+                return self._json({"error": "bad json"}, 400)
+            action, idx = body.get("action"), body.get("index")
+            text = str(body.get("text") or "").strip()[:300]
+
+            def edit(d):
+                tasks = d["tasks"]
+                if action == "add" and text:
+                    tasks.append({"text": text, "done": False, "at": time.time()})
+                elif action in ("toggle", "remove") and isinstance(idx, int) and 0 <= idx < len(tasks):
+                    if action == "toggle":
+                        tasks[idx]["done"] = not tasks[idx].get("done")
+                    else:
+                        tasks.pop(idx)
+                elif action == "clear_done":
+                    d["tasks"] = [t for t in tasks if not t.get("done")]
+                else:
+                    return False
+                return True
+            ok = commands.update_state(edit)
+            return self._json({"ok": ok, "tasks": commands.load()["tasks"]}, 200 if ok else 400)
 
         if p == "/api/timing":
             # the browser's complete record of one turn (stage durations only)
