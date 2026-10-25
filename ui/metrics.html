@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="jarvis-token" content="__JARVIS_TOKEN__">
+<title>JARVIS · Latency Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#02070c; --panel:rgba(6,20,30,.78); --edge:rgba(57,232,255,.22); --edge2:rgba(57,232,255,.5);
+  --ink:#e8fbff; --mut:#83b7c4; --dim:#4f7a88; --faint:#1d3640;
+  --cyan:#40f3ff; --amber:#ffb648; --red:#ff5d6c; --green:#39f5a6; --violet:#a884ff;
+  --disp:"Chakra Petch",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:radial-gradient(900px 500px at 50% 0%,rgba(9,91,112,.35),transparent 65%),linear-gradient(180deg,#02070c,#041018);
+  color:var(--ink);font-family:var(--mono);font-size:12px;min-height:100vh;padding:20px 22px 40px}
+a{color:var(--cyan)}
+header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+.over{color:var(--amber);letter-spacing:.42em;font-size:11px;text-transform:uppercase}
+h1{font-family:var(--disp);font-size:34px;letter-spacing:.18em;color:#eaffff;text-shadow:0 0 22px rgba(64,243,255,.4)}
+.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.controls select,.controls a.btn{background:rgba(5,18,28,.85);color:var(--ink);border:1px solid var(--edge);border-radius:12px;
+  padding:8px 10px;font-family:var(--mono);font-size:11px;text-decoration:none}
+.live{color:var(--mut);letter-spacing:.14em;font-size:10px}
+.live i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green);margin-right:6px;vertical-align:0}
+.live.stale i{background:var(--amber);box-shadow:0 0 10px var(--amber)}
+.live.off i{background:var(--red);box-shadow:0 0 10px var(--red)}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(12,1fr)}
+.card{background:var(--panel);border:1px solid var(--edge);border-radius:20px;padding:16px 18px;min-width:0}
+.card h2{font-family:var(--disp);font-size:13px;letter-spacing:.2em;text-transform:uppercase;color:var(--cyan);margin-bottom:4px}
+.card .sub{color:var(--dim);font-size:10.5px;margin-bottom:12px;line-height:1.5}
+.span12{grid-column:span 12}.span8{grid-column:span 8}.span4{grid-column:span 4}.span6{grid-column:span 6}
+.tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
+.tile{background:var(--panel);border:1px solid var(--edge);border-radius:18px;padding:14px 16px}
+.tile .k{color:var(--dim);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase}
+.tile .v{font-family:var(--disp);font-size:30px;font-weight:600;margin-top:6px;color:#effcff}
+.tile .v small{font-size:14px;color:var(--mut);margin-left:3px}
+.tile .d{color:var(--mut);font-size:10.5px;margin-top:4px}
+.tile.bad .v{color:var(--red)}.tile.good .v{color:var(--green)}
+svg{display:block;width:100%;height:auto;overflow:visible}
+svg text{font-family:var(--mono);fill:var(--dim);font-size:10px}
+.axis line,.grid-line{stroke:var(--faint);stroke-width:1}
+table{width:100%;border-collapse:collapse}
+th{color:var(--dim);font-weight:500;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;text-align:right;padding:6px 8px;border-bottom:1px solid var(--faint)}
+th:first-child,td:first-child{text-align:left}
+td{padding:7px 8px;text-align:right;border-bottom:1px solid rgba(29,54,64,.55);color:var(--ink);white-space:nowrap}
+td .sw{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:7px;vertical-align:-1px}
+tr.row{cursor:pointer}tr.row:hover td{background:rgba(64,243,255,.05)}
+tr.sel td{background:rgba(64,243,255,.1)}
+tr.slow td.tot{color:var(--amber)}tr.prob td.note{color:var(--red)}
+td.note{text-align:left;color:var(--mut);white-space:normal}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:2px 0 10px;color:var(--mut);font-size:10.5px}
+.legend span i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.stats{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;color:var(--mut);font-size:10.5px}
+.stats b{color:var(--ink);font-weight:500}
+.empty{color:var(--dim);padding:26px 0;text-align:center;line-height:1.7}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.mini h3{color:var(--mut);font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:500;margin-bottom:6px}
+#detail .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin-top:12px;color:var(--mut);font-size:11px}
+#detail .kv b{color:var(--ink);font-weight:500}
+@media (max-width:1100px){.span8,.span4,.span6{grid-column:span 12}.tiles{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:640px){#stack{overflow-x:auto}#stack svg{min-width:720px}body{padding:14px 16px}.tiles{grid-template-columns:repeat(2,1fr)}.split{grid-template-columns:1fr}h1{font-size:26px}}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="over">JARVIS · Voice pipeline</div>
+    <h1>LATENCY MONITOR</h1>
+  </div>
+  <div class="controls">
+    <label class="live" id="live"><i></i><span>connecting…</span></label>
+    <select id="win" title="Turns used for the tiles and stage table">
+      <option value="20">last 20 turns</option><option value="50">last 50 turns</option><option value="200">last 200 turns</option>
+    </select>
+    <select id="kind"><option value="all">voice + typed</option><option value="voice">voice only</option><option value="text">typed only</option></select>
+    <a class="btn" href="/">← HUD</a>
+  </div>
+</header>
+
+<section class="tiles" id="tiles"></section>
+
+<div class="grid" style="margin-top:14px">
+  <div class="card span8">
+    <h2>Trend</h2>
+    <div class="sub">You stopped (or pressed send) → Jarvis starts speaking, per turn. Dashed line = median. Purple marks = runtime changes (pick “last 200 turns” for the long view).</div>
+    <div id="trend"></div>
+  </div>
+  <div class="card span4">
+    <h2>Stages</h2>
+    <div class="sub">Per-stage milliseconds across the window.</div>
+    <div id="stageTable"></div>
+  </div>
+
+  <div class="card span12">
+    <h2>Where the time goes</h2>
+    <div class="sub">One bar per turn, newest at the top. Hover a segment for its time; click a bar for the turn's details.</div>
+    <div class="legend" id="legend"></div>
+    <div id="stack"></div>
+  </div>
+
+  <div class="card span6">
+    <h2>Voice input</h2>
+    <div class="sub">What the microphone and speech-to-text did.</div>
+    <div class="split">
+      <div class="mini"><h3>Speech length → STT time</h3><div id="sttScatter"></div></div>
+      <div class="mini"><h3>Room noise · rejected blips</h3><div id="noise"></div></div>
+    </div>
+    <div class="stats" id="inStats"></div>
+  </div>
+  <div class="card span6">
+    <h2>Voice output</h2>
+    <div class="sub">What text-to-speech and playback did.</div>
+    <div class="split">
+      <div class="mini"><h3>Answer length → TTS time</h3><div id="ttsScatter"></div></div>
+      <div class="mini"><h3>How long Jarvis spoke</h3><div id="spoke"></div></div>
+    </div>
+    <div class="stats" id="outStats"></div>
+  </div>
+
+  <div class="card span8">
+    <h2>Recent turns</h2>
+    <div class="sub">Newest first. Amber total = slower than the window's p90. Red note = a problem.</div>
+    <div id="recent"></div>
+  </div>
+  <div class="card span4" id="detail">
+    <h2>Turn detail</h2>
+    <div class="sub">Click a turn to see its waterfall.</div>
+    <div id="detailBody"></div>
+  </div>
+</div>
+
+<script>
+const TOKEN = document.querySelector('meta[name="jarvis-token"]')?.content || '';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// Pipeline stages, in order, with one colour each (shared with the HUD strip).
+const STAGES = [
+  ['endpoint wait', 'Silence wait',  '#5b8796'],
+  ['encode wav',    'Encode',        '#2f5662'],
+  ['upload + STT',  'Speech-to-text','#a884ff'],
+  ['to Hermes',     'Hermes → first word', '#ffb648'],
+  ['answer stream', 'Rest of answer','#ffd79a'],
+  ['TTS synth',     'Text-to-speech','#39f5a6'],
+  ['play start',    'Playback start','#40f3ff'],
+];
+const SERVER_ROWS = [
+  ['hermes_first_text_ms', 'Hermes first word (server)'],
+  ['hermes_total_ms',      'Hermes total (server)'],
+  ['session_new_ms',       'New session'],
+  ['lock_wait_ms',         'Waiting behind another run'],
+];
+
+let ALL = [], selected = null, lastSig = '';
+
+const median = a => pct(a, .5);
+function pct(a, p){
+  const v = a.filter(x => typeof x === 'number' && isFinite(x)).sort((x, y) => x - y);
+  if (!v.length) return null;
+  const k = (v.length - 1) * p, lo = Math.floor(k), hi = Math.min(lo + 1, v.length - 1);
+  return v[lo] + (v[hi] - v[lo]) * (k - lo);
+}
+const secs = ms => ms == null ? '—' : (ms / 1000).toFixed(ms < 10000 ? 2 : 1);
+const msTxt = ms => ms == null ? '—' : Math.round(ms).toLocaleString('en-GB');
+const when = r => {
+  const s = String(r.logged_at || '').replace(/([+-]\d\d)(\d\d)$/, '$1:$2');
+  const d = new Date(s);
+  return isNaN(d) ? null : d;
+};
+const headline = r => typeof r.headline_ms === 'number' ? r.headline_ms : null;
+const isProblem = r => r.note && r.note !== 'approval answer';
+const stageOf = (r, key) => (r.stages || {})[key];
+
+function filtered(){
+  const k = $('#kind').value;
+  return ALL.filter(r => k === 'all' || r.kind === k);
+}
+
+// ── tiles ──
+function renderTiles(win){
+  const heads = win.map(headline);
+  const med = median(heads), p90 = pct(heads, .9);
+  const today = new Date().toDateString();
+  const turnsToday = filtered().filter(r => when(r)?.toDateString() === today).length;
+  const problems = win.filter(isProblem).length;
+  const spoken = win.filter(r => r.spoke_ms != null);
+  const barge = spoken.length ? Math.round(100 * spoken.filter(r => r.interrupted).length / spoken.length) : null;
+  const prev = filtered().slice(-2 * win.length, -win.length).map(headline);
+  const prevMed = median(prev);
+  const delta = med != null && prevMed != null ? med - prevMed : null;
+  const tiles = [
+    {k:'Median to first word', v:secs(med), u:'s', d: delta == null ? `${win.length} turns` :
+      `${delta <= 0 ? '▼' : '▲'} ${secs(Math.abs(delta))}s vs previous ${prev.length}`, cls: med != null && med < 6000 ? 'good' : ''},
+    {k:'p90 to first word', v:secs(p90), u:'s', d:'9 in 10 turns are faster'},
+    {k:'Turns today', v:turnsToday, u:'', d:`${filtered().length} in log window`},
+    {k:'Problem turns', v:problems, u:'', d: problems ? 'errors, failed or empty STT' : 'none in window', cls: problems ? 'bad' : 'good'},
+    {k:'Barge-in rate', v: barge == null ? '—' : barge, u: barge == null ? '' : '%', d:`${spoken.length} spoken replies`},
+  ];
+  $('#tiles').innerHTML = tiles.map(t => `<div class="tile ${t.cls || ''}"><div class="k">${t.k}</div>`
+    + `<div class="v">${t.v}<small>${t.u}</small></div><div class="d">${esc(t.d)}</div></div>`).join('');
+}
+
+// ── trend line ──
+function renderTrend(recs){
+  const pts = recs.map((r, i) => ({i, r, y: headline(r)})).filter(p => p.y != null);
+  if (pts.length < 2){ $('#trend').innerHTML = '<div class="empty">Need at least two completed turns.</div>'; return; }
+  const W = 760, H = 230, L = 44, R = 12, T = 12, B = 26;
+  const maxY = Math.max(...pts.map(p => p.y)) * 1.08;
+  const x = i => L + (W - L - R) * (recs.length === 1 ? .5 : i / (recs.length - 1));
+  const y = v => T + (H - T - B) * (1 - v / maxY);
+  let g = '';
+  const step = niceStep(maxY / 1000);
+  for (let v = 0; v <= maxY / 1000; v += step){
+    g += `<line class="grid-line" x1="${L}" x2="${W - R}" y1="${y(v * 1000)}" y2="${y(v * 1000)}"/>`
+      + `<text x="${L - 6}" y="${y(v * 1000) + 3}" text-anchor="end">${v}s</text>`;
+  }
+  // runtime changes (e.g. cli → acp)
+  let prevMode = null;
+  recs.forEach((r, i) => {
+    const m = (r.mode || (r.server || {}).mode || '').split('-')[0] || null;
+    if (m && prevMode && m !== prevMode){
+      g += `<line x1="${x(i)}" x2="${x(i)}" y1="${T}" y2="${H - B}" stroke="#a884ff" stroke-dasharray="3 4"/>`
+        + `<text x="${x(i) + 4}" y="${T + 10}" style="fill:#a884ff">${esc(prevMode)} → ${esc(m)}</text>`;
+    }
+    if (m) prevMode = m;
+  });
+  const med = median(pts.map(p => p.y));
+  g += `<line x1="${L}" x2="${W - R}" y1="${y(med)}" y2="${y(med)}" stroke="#40f3ff" stroke-opacity=".45" stroke-dasharray="5 5"/>`
+    + `<text x="${W - R}" y="${y(med) - 5}" text-anchor="end" style="fill:#40f3ff">median ${secs(med)}s</text>`;
+  g += `<polyline fill="none" stroke="#40f3ff" stroke-width="1.6" points="${pts.map(p => `${x(p.i)},${y(p.y)}`).join(' ')}"/>`;
+  g += pts.map(p => `<circle cx="${x(p.i)}" cy="${y(p.y)}" r="${p.r === selected ? 5 : 3}" fill="${p.r.kind === 'voice' ? '#40f3ff' : '#ffb648'}" `
+    + `stroke="#02070c" stroke-width="1" style="cursor:pointer" data-i="${p.i}"><title>${esc(fmtWhen(p.r))} · ${p.r.kind} · ${secs(p.y)}s</title></circle>`).join('');
+  g += `<text x="${L}" y="${H - 6}">older</text><text x="${W - R}" y="${H - 6}" text-anchor="end">newest</text>`
+    + `<text x="${(L + W) / 2}" y="${H - 6}" text-anchor="middle"><tspan style="fill:#40f3ff">●</tspan> voice   <tspan style="fill:#ffb648">●</tspan> typed</text>`;
+  $('#trend').innerHTML = `<svg viewBox="0 0 ${W} ${H}">${g}</svg>`;
+  $('#trend').querySelectorAll('circle').forEach(c => c.onclick = () => select(recs[+c.dataset.i]));
+}
+function niceStep(max){
+  const raw = max / 4, mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+  return [1, 2, 5, 10].map(m => m * mag).find(s => s >= raw) || mag;
+}
+const fmtWhen = r => { const d = when(r); return d ? d.toLocaleString('en-GB', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '—'; };
+
+// ── stage table ──
+function renderStageTable(win){
+  const rows = STAGES.map(([key, label, col]) => {
+    const v = win.map(r => stageOf(r, key));
+    return {label, col, v};
+  }).concat(SERVER_ROWS.map(([key, label]) => ({label, col:null, v: win.map(r => (r.server || {})[key])})))
+    .concat([{label:'ElevenLabs STT', col:null, v: win.map(r => (r.stt || {}).elevenlabs_stt_ms)},
+             {label:'ElevenLabs TTS', col:null, v: win.map(r => r.tts_ms)}]);
+  const body = rows.filter(r => r.v.some(x => typeof x === 'number')).map(r => {
+    const n = r.v.filter(x => typeof x === 'number').length;
+    return `<tr><td>${r.col ? `<span class="sw" style="background:${r.col}"></span>` : '<span class="sw"></span>'}${esc(r.label)}</td>`
+      + `<td>${msTxt(median(r.v))}</td><td>${msTxt(pct(r.v, .9))}</td><td>${msTxt(pct(r.v, 1))}</td><td style="color:var(--dim)">${n}</td></tr>`;
+  }).join('');
+  $('#stageTable').innerHTML = body ? `<table><tr><th>stage (ms)</th><th>median</th><th>p90</th><th>max</th><th>n</th></tr>${body}</table>`
+    : '<div class="empty">No stage data yet.</div>';
+}
+
+// ── stacked bars ──
+function renderStack(recs){
+  $('#legend').innerHTML = STAGES.map(([, label, col]) => `<span><i style="background:${col}"></i>${label}</span>`).join('');
+  const rows = recs.slice(-30).reverse().filter(r => STAGES.some(([k]) => typeof stageOf(r, k) === 'number'));
+  if (!rows.length){ $('#stack').innerHTML = '<div class="empty">No completed turns yet.</div>'; return; }
+  const W = 1000, rowH = 17, gap = 5, L = 110, R = 64;
+  const total = r => STAGES.reduce((a, [k]) => a + (stageOf(r, k) || 0), 0);
+  const max = Math.max(...rows.map(total));
+  const H = rows.length * (rowH + gap);
+  let g = '';
+  rows.forEach((r, i) => {
+    const y = i * (rowH + gap);
+    let x = L;
+    g += `<g style="cursor:pointer" data-k="${i}"><rect x="0" y="${y - 2}" width="${W}" height="${rowH + 4}" fill="${r === selected ? 'rgba(64,243,255,.09)' : 'transparent'}"/>`;
+    g += `<text x="0" y="${y + 12}">${esc(fmtWhen(r).split(', ').pop())} ${r.kind === 'voice' ? '🎙' : '⌨'}</text>`;
+    STAGES.forEach(([k, label, col]) => {
+      const v = stageOf(r, k); if (typeof v !== 'number' || v <= 0) return;
+      const w = (W - L - R) * v / max;
+      g += `<rect x="${x}" y="${y}" width="${Math.max(w, 1)}" height="${rowH}" rx="3" fill="${col}"><title>${label}: ${msTxt(v)} ms</title></rect>`;
+      x += w;
+    });
+    g += `<text x="${x + 6}" y="${y + 12}" style="fill:${isProblem(r) ? '#ff5d6c' : '#83b7c4'}">${secs(total(r))}s${r.interrupted ? ' ✂' : ''}</text></g>`;
+  });
+  $('#stack').innerHTML = `<svg viewBox="0 0 ${W} ${H}">${g}</svg>`;
+  $('#stack').querySelectorAll('g[data-k]').forEach(el => el.onclick = () => select(rows[+el.dataset.k]));
+}
+
+// ── scatter helper ──
+function scatter(el, pts, xl, yl, col){
+  if (pts.length < 2){ $(el).innerHTML = '<div class="empty">Not enough data yet.</div>'; return; }
+  const W = 320, H = 170, L = 38, R = 8, T = 8, B = 30;
+  const mx = Math.max(...pts.map(p => p.x)) * 1.08 || 1, my = Math.max(...pts.map(p => p.y)) * 1.1 || 1;
+  const x = v => L + (W - L - R) * v / mx, y = v => T + (H - T - B) * (1 - v / my);
+  let g = `<line class="grid-line" x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}"/><line class="grid-line" x1="${L}" x2="${L}" y1="${T}" y2="${H - B}"/>`;
+  g += `<text x="${L - 5}" y="${T + 8}" text-anchor="end">${yl(my)}</text><text x="${L - 5}" y="${H - B}" text-anchor="end">0</text>`;
+  g += `<text x="${W - R}" y="${H - B + 14}" text-anchor="end">${xl(mx)}</text><text x="${L}" y="${H - B + 14}">0</text>`;
+  // least-squares trend line
+  const n = pts.length, sx = pts.reduce((a, p) => a + p.x, 0), sy = pts.reduce((a, p) => a + p.y, 0);
+  const sxx = pts.reduce((a, p) => a + p.x * p.x, 0), sxy = pts.reduce((a, p) => a + p.x * p.y, 0);
+  const den = n * sxx - sx * sx;
+  if (den){
+    const b = (n * sxy - sx * sy) / den, a = (sy - b * sx) / n;
+    g += `<line x1="${x(0)}" y1="${y(Math.max(0, a))}" x2="${x(mx)}" y2="${y(Math.max(0, a + b * mx))}" stroke="${col}" stroke-opacity=".5" stroke-dasharray="4 4"/>`;
+  }
+  g += pts.map(p => `<circle cx="${x(p.x)}" cy="${y(p.y)}" r="3.2" fill="${col}" fill-opacity=".85"><title>${esc(p.t)}</title></circle>`).join('');
+  $(el).innerHTML = `<svg viewBox="0 0 ${W} ${H}">${g}</svg>`;
+}
+
+function renderInput(win){
+  const voice = win.filter(r => r.kind === 'voice');
+  const pts = voice.map(r => ({x: r.speech_ms, y: (r.stt || {}).elevenlabs_stt_ms ?? stageOf(r, 'upload + STT'),
+    t: `${secs(r.speech_ms)}s of speech → STT ${msTxt((r.stt || {}).elevenlabs_stt_ms ?? stageOf(r, 'upload + STT'))} ms`}))
+    .filter(p => typeof p.x === 'number' && typeof p.y === 'number');
+  scatter('#sttScatter', pts, v => secs(v) + 's', v => secs(v) + 's', '#a884ff');
+
+  // noise floor line + rejected-blip bars per voice turn
+  const nz = voice.filter(r => typeof r.noise_floor === 'number');
+  if (nz.length < 2){ $('#noise').innerHTML = '<div class="empty">Recorded from the next voice turns.</div>'; }
+  else {
+    const W = 320, H = 170, L = 38, R = 8, T = 8, B = 30;
+    const mN = Math.max(...nz.map(r => r.noise_floor)) * 1.2, mB = Math.max(1, ...nz.map(r => r.rejected_noises || 0));
+    const x = i => L + (W - L - R) * (nz.length === 1 ? .5 : i / (nz.length - 1));
+    const bw = Math.max(2, (W - L - R) / nz.length * .5);
+    let g = `<line class="grid-line" x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}"/>`;
+    g += nz.map((r, i) => { const h = (H - T - B) * (r.rejected_noises || 0) / mB * .45;
+      return h ? `<rect x="${x(i) - bw / 2}" y="${H - B - h}" width="${bw}" height="${h}" fill="#ff5d6c" fill-opacity=".55"><title>${r.rejected_noises} rejected blip(s)</title></rect>` : ''; }).join('');
+    g += `<polyline fill="none" stroke="#5b8796" stroke-width="1.6" points="${nz.map((r, i) => `${x(i)},${T + (H - T - B) * (1 - r.noise_floor / mN)}`).join(' ')}"/>`;
+    g += `<text x="${L - 5}" y="${T + 8}" text-anchor="end">${mN.toFixed(3)}</text><text x="${L}" y="${H - B + 14}">older</text><text x="${W - R}" y="${H - B + 14}" text-anchor="end">newest</text>`;
+    $('#noise').innerHTML = `<svg viewBox="0 0 ${W} ${H}">${g}</svg>`;
+  }
+  const words = voice.map(r => r.words), rej = voice.map(r => r.rejected_noises).filter(v => typeof v === 'number');
+  $('#inStats').innerHTML = [
+    `voice turns <b>${voice.length}</b>`,
+    `median speech <b>${secs(median(voice.map(r => r.speech_ms)))}s</b>`,
+    `median words <b>${median(words) == null ? '—' : Math.round(median(words))}</b>`,
+    `rejected blips <b>${rej.reduce((a, b) => a + b, 0)}</b>`,
+    `STT failures <b>${voice.filter(r => /STT|transcri/i.test(r.note || '')).length}</b>`,
+  ].map(s => `<span>${s}</span>`).join('');
+}
+
+function renderOutput(win){
+  const pts = win.map(r => ({x: r.answer_chars, y: r.tts_ms, t: `${r.answer_chars} chars → TTS ${msTxt(r.tts_ms)} ms`}))
+    .filter(p => typeof p.x === 'number' && typeof p.y === 'number');
+  scatter('#ttsScatter', pts, v => Math.round(v) + 'ch', v => secs(v) + 's', '#39f5a6');
+  const sp = win.filter(r => typeof r.spoke_ms === 'number');
+  if (sp.length < 2){ $('#spoke').innerHTML = '<div class="empty">Recorded from the next spoken replies.</div>'; }
+  else {
+    const W = 320, H = 170, L = 38, R = 8, T = 8, B = 30, m = Math.max(...sp.map(r => r.spoke_ms)) * 1.1;
+    const bw = (W - L - R) / sp.length;
+    let g = `<line class="grid-line" x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}"/>`;
+    g += sp.map((r, i) => { const h = (H - T - B) * r.spoke_ms / m;
+      return `<rect x="${L + i * bw + bw * .15}" y="${H - B - h}" width="${bw * .7}" height="${h}" rx="2" fill="${r.interrupted ? '#ffb648' : '#40f3ff'}" fill-opacity=".8"><title>spoke ${secs(r.spoke_ms)}s${r.interrupted ? ' — interrupted' : ''}</title></rect>`; }).join('');
+    g += `<text x="${L - 5}" y="${T + 8}" text-anchor="end">${secs(m)}s</text><text x="${L}" y="${H - B + 14}">older</text><text x="${W - R}" y="${H - B + 14}" text-anchor="end"><tspan style="fill:#ffb648">■</tspan> interrupted</text>`;
+    $('#spoke').innerHTML = `<svg viewBox="0 0 ${W} ${H}">${g}</svg>`;
+  }
+  $('#outStats').innerHTML = [
+    `spoken replies <b>${sp.length}</b>`,
+    `median spoke <b>${secs(median(sp.map(r => r.spoke_ms)))}s</b>`,
+    `interrupted <b>${sp.filter(r => r.interrupted).length}</b>`,
+    `median answer <b>${median(win.map(r => r.answer_chars)) == null ? '—' : Math.round(median(win.map(r => r.answer_chars))) + ' chars'}</b>`,
+    `median TTS <b>${msTxt(median(win.map(r => r.tts_ms)))} ms</b>`,
+  ].map(s => `<span>${s}</span>`).join('');
+}
+
+// ── recent turns ──
+function renderRecent(win){
+  const p90 = pct(win.map(headline), .9);
+  const rows = filtered().slice(-25).reverse();
+  if (!rows.length){ $('#recent').innerHTML = '<div class="empty">No turns yet.</div>'; return; }
+  $('#recent').innerHTML = `<table><tr><th>time</th><th>kind</th><th>total</th><th>slowest stage</th><th>tools</th><th>mode</th><th style="text-align:left">note</th></tr>`
+    + rows.map((r, i) => {
+      const slow = STAGES.map(([k, l, c]) => [l, stageOf(r, k), c]).filter(s => typeof s[1] === 'number').sort((a, b) => b[1] - a[1])[0];
+      const h = headline(r);
+      const cls = ['row', h != null && p90 != null && h > p90 ? 'slow' : '', isProblem(r) ? 'prob' : '', r === selected ? 'sel' : ''].join(' ');
+      return `<tr class="${cls}" data-i="${i}"><td>${esc(fmtWhen(r))}</td><td>${r.kind}</td><td class="tot">${secs(h)}s</td>`
+        + `<td>${slow ? `<span class="sw" style="background:${slow[2]}"></span>${esc(slow[0])} ${secs(slow[1])}s` : '—'}</td>`
+        + `<td>${r.tools ?? '—'}${r.approvals ? ` · ${r.approvals}✋` : ''}</td><td style="color:var(--dim)">${esc((r.mode || (r.server || {}).mode || '—'))}</td>`
+        + `<td class="note">${esc(r.note || (r.interrupted ? 'interrupted' : ''))}</td></tr>`;
+    }).join('') + '</table>';
+  $('#recent').querySelectorAll('tr.row').forEach(tr => tr.onclick = () => select(rows[+tr.dataset.i]));
+}
+
+// ── one turn's waterfall ──
+function renderDetail(){
+  const r = selected;
+  if (!r){ $('#detailBody').innerHTML = '<div class="empty">Click a turn in the trend, the bars or the table.</div>'; return; }
+  const st = STAGES.map(([k, l, c]) => [l, stageOf(r, k), c]).filter(s => typeof s[1] === 'number');
+  const tot = st.reduce((a, s) => a + s[1], 0) || 1;
+  const W = 360, rowH = 16, gap = 8, L = 132;
+  let x0 = 0, g = '';
+  st.forEach(([l, v, c], i) => {
+    const y = i * (rowH + gap), x = L + (W - L - 40) * x0 / tot, w = Math.max(1, (W - L - 40) * v / tot);
+    g += `<text x="0" y="${y + 12}">${esc(l)}</text><rect x="${x}" y="${y}" width="${w}" height="${rowH}" rx="3" fill="${c}"><title>${msTxt(v)} ms</title></rect>`
+      + `<text x="${x + w + 5}" y="${y + 12}" style="fill:#83b7c4">${secs(v)}s</text>`;
+    x0 += v;
+  });
+  const sv = r.server || {}, kv = [
+    ['when', fmtWhen(r)], ['kind', r.kind], ['to first word', secs(headline(r)) + 's'],
+    ['mode', r.mode || sv.mode || '—'], ['stop', r.stop_reason || sv.stop_reason || '—'],
+    ['speech', r.speech_ms != null ? secs(r.speech_ms) + 's' : '—'], ['words', r.words ?? '—'],
+    ['answer', r.answer_chars != null ? r.answer_chars + ' chars' : '—'],
+    ['spoke', r.spoke_ms != null ? secs(r.spoke_ms) + 's' + (r.interrupted ? ' (interrupted)' : '') : '—'],
+    ['tools · approvals', `${r.tools ?? 0} · ${r.approvals ?? 0}`],
+    ['noise · peak', r.noise_floor != null ? `${r.noise_floor} · ${r.peak_level}` : '—'],
+    ['persona sent', sv.persona_sent ? `yes (${sv.prompt_chars} chars)` : (sv.prompt_chars != null ? `no (${sv.prompt_chars} chars)` : '—')],
+    ['note', r.note || '—'],
+  ];
+  $('#detailBody').innerHTML = `<svg viewBox="0 0 ${W} ${st.length * (rowH + gap)}">${g}</svg>`
+    + `<div class="kv">${kv.map(([k, v]) => `<span>${esc(k)}</span><b>${esc(v)}</b>`).join('')}</div>`;
+}
+
+function select(r){ selected = r; render(); }
+
+function render(){
+  const recs = filtered();
+  const win = recs.slice(-Number($('#win').value));
+  if (!ALL.length){
+    $('#tiles').innerHTML = '';
+    document.querySelectorAll('#trend,#stageTable,#stack,#sttScatter,#noise,#ttsScatter,#spoke,#recent').forEach(el =>
+      el.innerHTML = '<div class="empty">No turns logged yet. Talk to Jarvis or type a request on the HUD; each finished turn appears here within 5 s.</div>');
+    return;
+  }
+  renderTiles(win); renderTrend(win); renderStageTable(win); renderStack(recs);   // bars: always the last 30
+  renderInput(win); renderOutput(win); renderRecent(win); renderDetail();
+}
+
+async function poll(){
+  const live = $('#live');
+  try {
+    const res = await fetch('/api/timings?limit=200', {headers:{'x-jarvis-token': TOKEN}});
+    if (res.status === 401){ live.className = 'live off'; live.querySelector('span').textContent = 'reload this page from the HUD (server restarted)'; return; }
+    const j = await res.json();
+    const recs = j.records || [];
+    const sig = recs.length + '|' + (recs[recs.length - 1] || {}).logged_at + '|' + (recs[recs.length - 1] || {}).id;
+    if (sig !== lastSig){ lastSig = sig; ALL = recs; if (selected && !ALL.includes(selected)) selected = ALL.find(r => r.id === selected.id) || null; render(); }
+    live.className = 'live'; live.querySelector('span').textContent = `live · ${ALL.length} turns · ${j.mode || 'runtime unknown'}`;
+    if (!j.logging){ live.className = 'live stale'; live.querySelector('span').textContent = 'timing log is off (JARVIS_TIMING_LOG=0)'; }
+  } catch(e){
+    live.className = 'live off'; live.querySelector('span').textContent = 'server unreachable';
+  }
+}
+$('#win').onchange = render;
+$('#kind').onchange = () => { selected = null; render(); };
+poll(); setInterval(poll, 5000);
+</script>
+</body>
+</html>
