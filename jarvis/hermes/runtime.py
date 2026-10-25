@@ -467,7 +467,8 @@ def run(message, session_id=None, system=None, timing=None, full_system=None):
                        profile=PROFILE, runtime="hermes-acp", session_id=session_id)
             gen = acp_runtime.run(acp_command(), WORKDIR, _child_env(),
                                   compose_prompt(message, system), session_id, timing,
-                                  RAW_LOG or None)
+                                  RAW_LOG or None,
+                                  fresh_prompt_text=compose_prompt(message, system or full_system))
             try:
                 first = next(gen)                # starts hermes-acp / session if needed
             except StopIteration:

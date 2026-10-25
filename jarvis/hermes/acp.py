@@ -39,6 +39,9 @@ RETRY_AFTER_FAILURE_S = 120
 # Hermes logs every model call on stderr, e.g.
 #   agent.conversation_loop: API call #1: model=gpt-6-luna provider=opencode-zen in=13378 out=5 total=13383 latency=2.3s
 # Those lines tell us how much of a turn was the model itself, and how many calls it made.
+# Hermes answers a prompt sent to a session that is still mid-turn with this
+# instead of a reply, and runs it later where nobody is listening.
+_QUEUED = re.compile(r"^Queued for the next turn\. \(\d+ queued\)")
 _MODEL = re.compile(r"\bmodel=(\S+)(?:\s+provider=(\S+))?")
 _API_CALL = re.compile(r"API call #(\d+):.*?\bin=(\d+)\b.*?\bout=(\d+)\b.*?\blatency=([\d.]+)s")
 
@@ -82,6 +85,8 @@ class AcpClient:
         self.turn = None                      # {"session", "q", "perms"} while a prompt runs
         self.stderr = collections.deque(maxlen=200)
         self.model = None                     # {"model", "provider"} from the last API call log line
+        self.busy = {}                        # session -> when we abandoned a turn Hermes is still finishing
+        self.stale = set()                    # sessions where Hermes queued our prompt instead of answering
         self._ids = itertools.count(1)
         self._pending = {}                    # request id -> callback(msg)
         self._plock = threading.Lock()
@@ -102,6 +107,8 @@ class AcpClient:
                 return 0
             t = time.monotonic()
             self.sessions.clear()
+            self.busy.clear()
+            self.stale.clear()
             with self._spare_lock:
                 self._spare = None
             try:
@@ -283,6 +290,28 @@ class AcpClient:
             self._spare_thread = threading.Thread(target=work, daemon=True)
             self._spare_thread.start()
 
+    # ── busy sessions ────────────────────────────────────────
+    def is_busy(self, sid):
+        return sid in self.busy or sid in self.stale
+
+    def settle(self, sid, timeout=20):
+        """Ask Hermes to stop an abandoned turn and wait for it to end.
+        True when the session is free for a new prompt."""
+        if sid in self.stale or not self.alive():
+            return False
+        try:
+            self._send({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": sid}})
+        except AcpUnavailable:
+            return False
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if sid not in self.busy:
+                return True
+            if not self.alive():
+                return False
+            time.sleep(0.25)
+        return False
+
     # ── permissions & cancel ─────────────────────────────────
     def answer_permission(self, perm_id, option_id):
         turn = self.turn
@@ -344,7 +373,7 @@ class AcpClient:
             self._pending[rid] = lambda m: q.put(("response", m))
         t0 = last = last_ping = time.monotonic()
         first, done, tools = True, False, {}
-        tool_names, last_note = {}, 0.0
+        tool_names, last_note, queued = {}, 0.0, False
         first_thought = None
         try:
             self._send({"jsonrpc": "2.0", "id": rid, "method": "session/prompt",
@@ -387,6 +416,9 @@ class AcpClient:
                     if k == "agent_message_chunk":
                         c = payload.get("content") or {}
                         txt = c.get("text") if c.get("type", "text") == "text" else ""
+                        if txt and first and _QUEUED.match(txt.strip()):
+                            queued = True              # not an answer: keep it out of the reply
+                            continue
                         if txt:
                             if first:
                                 first = False
@@ -421,6 +453,13 @@ class AcpClient:
                         yield dict(t="error", timing=timing,
                                    message=f"Hermes error: {json.dumps(payload['error'])[:300]}")
                         return
+                    if queued:
+                        self.stale.add(session_id)
+                        yield dict(t="error", timing=timing, message=(
+                            "Hermes was still busy with an earlier task in this conversation, so it queued "
+                            "this request to run after that one, where its answer won't be heard. "
+                            "Ask again and I'll answer in a fresh conversation."))
+                        return
                     stop = (payload.get("result") or {}).get("stopReason")
                     timing["stop_reason"] = stop
                     self._turn_breakdown(timing, tools, t0)
@@ -429,6 +468,7 @@ class AcpClient:
                     yield dict(t="complete", session_id=session_id, ms=_ms(t0), timing=timing)
                     return
         finally:
+            responded = done
             if not done:
                 # the browser went away or the turn was abandoned: stop Hermes cleanly
                 # so the session is free for the next prompt
@@ -442,9 +482,17 @@ class AcpClient:
                             break
                         continue
                     if kind == "response":
+                        responded = True
                         break
             with self._plock:
-                self._pending.pop(rid, None)
+                if responded or not self.alive():
+                    self._pending.pop(rid, None)
+                else:
+                    # Hermes is still finishing this turn (a running tool can't be stopped
+                    # mid-step). Until its response arrives the session is busy, and a
+                    # prompt sent to it would be queued by Hermes rather than answered.
+                    self.busy[session_id] = time.monotonic()
+                    self._pending[rid] = lambda m, sid=session_id: self.busy.pop(sid, None)
             self.turn = None
             self.refill_spare()
 
@@ -508,12 +556,25 @@ def warm(cmd, cwd, env, raw_log=None):
     threading.Thread(target=_w, daemon=True).start()
 
 
-def run(cmd, cwd, env, prompt_text, session_id, timing, raw_log=None):
-    """Raises AcpUnavailable before yielding anything if ACP can't be used."""
+def run(cmd, cwd, env, prompt_text, session_id, timing, raw_log=None, fresh_prompt_text=None):
+    """Raises AcpUnavailable before yielding anything if ACP can't be used.
+    fresh_prompt_text: the prompt with the full persona, used if this turn has to
+    move to a new session because the current one is still busy."""
     c = get_client(cmd, cwd, env, raw_log)
     timing["acp_start_ms"] = c.ensure_started()
     if session_id and session_id in c.sessions:
         sid, timing["session_new_ms"] = session_id, 0
+        if c.is_busy(sid):
+            # never send into a busy session: Hermes would queue the prompt, not answer it
+            yield dict(t="note", message="finishing the previous task first…")
+            t = time.monotonic()
+            if not c.settle(sid):
+                yield dict(t="note", message="the previous task is still running in Hermes; "
+                                             "answering in a fresh conversation")
+                sid, timing["session_new_ms"] = c.take_session()
+                timing["session_switched"] = 1
+                prompt_text = fresh_prompt_text or prompt_text
+            timing["settle_ms"] = _ms(t)
     else:
         sid, timing["session_new_ms"] = c.take_session()
     yield from c.prompt(sid, prompt_text, timing)
